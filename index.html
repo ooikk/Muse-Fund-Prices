@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unit Trust Fund Tracker</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <h1>Unit Trust Fund Tracker</h1>
+  <p class="subtitle">Fund name, latest price, currency, price date and source link. Add any fund link, refresh prices, or enter a price manually when a site blocks automated crawling.</p>
+  <div class="toolbar">
+    <input id="search" type="search" placeholder="Search funds…" aria-label="Search funds">
+    <select id="currencyFilter" aria-label="Filter by currency">
+      <option value="">All currencies</option>
+      <option>SGD</option><option>USD</option><option>EUR</option>
+    </select>
+    <button id="refreshAll" class="primary">Refresh all prices</button>
+    <button id="exportBtn">Export JSON</button>
+    <label class="import-label">Import JSON <input id="importFile" type="file" accept="application/json" hidden></label>
+    <button id="resetBtn" class="danger-outline">Reset to seed funds</button>
+  </div>
+  <p id="status" class="status" role="status"></p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Add a fund</h2>
+    <form id="addForm">
+      <label>Fund name (optional — left blank, the tracker tries to read it from the page on refresh)
+        <input id="newName" type="text" placeholder="e.g. Allianz Europe Equity Growth Select AT (H2-SGD)">
+      </label>
+      <label>Currency
+        <select id="newCurrency"><option>SGD</option><option>USD</option><option>EUR</option><option>GBP</option><option>AUD</option><option>HKD</option></select>
+      </label>
+      <label class="wide">Fund link (required)
+        <input id="newUrl" type="url" required placeholder="https://www.dollardex.com/…">
+      </label>
+      <button type="submit" class="primary">Add fund</button>
+    </form>
+    <p class="hint">Tip: paste the fund overview link, not a search results page. DollarDex links look like <code>https://www.dollardex.com/SGN/?current=investUT/fundOverview&amp;p=…</code></p>
+  </section>
+
+  <section class="card">
+    <h2>Funds <span id="count"></span></h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Fund</th><th>Latest price</th><th>Currency</th><th>Price date</th><th>Status</th><th>Link</th><th></th></tr>
+        </thead>
+        <tbody id="fundRows"></tbody>
+      </table>
+    </div>
+    <p class="hint">Prices are indicative only — always check the source link before acting. DollarDex prices are usually based on prices from 2–4 dealing days earlier, so the price date often lags today.</p>
+  </section>
+</main>
+
+<footer>
+  <p>Your fund list is stored in this browser (localStorage) on this device. Use Export JSON to back it up or move it to another device. The serverless crawler (<code>/api/refresh</code>) only fetches the fund page you ask for; it stores nothing.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
