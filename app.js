@@ -154,6 +154,73 @@ document.getElementById('addForm').addEventListener('submit', (e) => {
 });
 
 document.getElementById('refreshAll').addEventListener('click', refreshAll);
+
+// --- Daily auto-refresh (client-side only) ---
+// Manual "Refresh all" and per-fund "Refresh" are unchanged. This option adds
+// one extra behaviour: a single refresh of all funds, once a day, at the time
+// chosen in the time picker (browser local time, e.g. 09:00).
+// It only runs while this page is open in a browser tab. It cannot refresh
+// prices in the background when the page is closed, because the fund list
+// lives in this browser's localStorage and there is no shared server database
+// to update. A true background refresh would need server storage (e.g. a
+// Vercel KV/Upstash store) and a scheduled server job — see README.md.
+const AUTO_KEY = 'unit-trust-auto-refresh-v1';
+let autoTimer = null;
+let autoNextAt = null;
+
+function loadAutoSettings() {
+  try { return JSON.parse(localStorage.getItem(AUTO_KEY)) || {}; } catch (e) { return {}; }
+}
+function saveAutoSettings() {
+  try {
+    localStorage.setItem(AUTO_KEY, JSON.stringify({
+      enabled: document.getElementById('autoRefresh').checked,
+      time: document.getElementById('autoTime').value || '09:00',
+    }));
+  } catch (e) { /* storage blocked */ }
+}
+function showAutoNext() {
+  const el = document.getElementById('autoNext');
+  el.textContent = autoNextAt
+    ? 'Next daily auto-refresh: ' + autoNextAt.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+    : '';
+}
+// Next occurrence of the chosen HH:MM in browser local time (today if it is
+// still ahead, otherwise tomorrow).
+function nextDailyRun(hhmm) {
+  const [h, m] = (hhmm || '09:00').split(':').map(Number);
+  const next = new Date();
+  next.setHours(h, m, 0, 0);
+  if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
+  return next;
+}
+function stopAuto() {
+  if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+  autoNextAt = null; showAutoNext();
+}
+function scheduleAuto() {
+  stopAuto();
+  const time = document.getElementById('autoTime').value || '09:00';
+  autoNextAt = nextDailyRun(time); showAutoNext();
+  autoTimer = setTimeout(async () => {
+    await refreshAll();
+    // Re-arm for the following day.
+    if (document.getElementById('autoRefresh').checked) scheduleAuto();
+  }, autoNextAt.getTime() - Date.now());
+  setStatus(`Daily auto-refresh on: all funds will refresh at ${time} while this page stays open.`);
+}
+const autoSettings = loadAutoSettings();
+document.getElementById('autoRefresh').checked = !!autoSettings.enabled;
+if (autoSettings.time) document.getElementById('autoTime').value = autoSettings.time;
+document.getElementById('autoRefresh').addEventListener('change', (e) => {
+  saveAutoSettings();
+  if (e.target.checked) scheduleAuto(); else { stopAuto(); setStatus('Daily auto-refresh off.'); }
+});
+document.getElementById('autoTime').addEventListener('change', () => {
+  saveAutoSettings();
+  if (document.getElementById('autoRefresh').checked) scheduleAuto();
+});
+if (document.getElementById('autoRefresh').checked) scheduleAuto();
 document.getElementById('search').addEventListener('input', render);
 document.getElementById('currencyFilter').addEventListener('change', render);
 

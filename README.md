@@ -68,6 +68,37 @@ Do not add credentials, session cookies or headless-browser evasion to this
 project to get around the block — that would break the site's terms of use
 and is fragile by design.
 
+## Daily auto-refresh
+
+Manual refresh is unchanged: "Refresh all" refreshes every fund, and each
+row's "Refresh" refreshes just that one fund. In addition, ticking
+"Auto-refresh daily while this page is open" and picking a time (default
+09:00, browser local time) adds one automatic "Refresh all" per day at
+that time. The checkbox and time are saved in the browser, so they
+survive a reload on the same device, and the page shows the next
+scheduled refresh.
+
+Limitations, stated plainly:
+
+- It only runs while the page is open in a tab. Closing the tab, the
+  browser, or the device stops it — the fund list lives in the browser's
+  localStorage, not on a server, so there is nothing for a background job
+  to update. If the page is not open at the chosen time, that day's run
+  is skipped and the next run is the following day.
+- Blocked funds (DollarDex bot detection) keep their last price on each
+  auto-refresh, exactly as a manual refresh does; they are not silently
+  replaced with a guessed price.
+- Each auto-refresh calls the crawler once per fund, with the same
+  ~1.2-second gap between funds, so a 17-fund refresh takes about 20
+  seconds of crawling.
+
+For a true background refresh (prices updated daily even with the page
+closed), the site would need server-side storage — for example Vercel KV
+or Upstash Redis to hold the fund list, plus a Vercel Cron job to refresh
+it — and the page would read from that store instead of localStorage.
+That is a bigger change with a hosted-service account to set up; say the
+word if you want it, and it can be added on top of this version.
+
 ## Seed data
 
 The 17 seed funds, with prices and dates as of 28–29 Oct 2026, are in

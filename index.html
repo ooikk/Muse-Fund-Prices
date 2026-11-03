@@ -21,6 +21,13 @@
     <label class="import-label">Import JSON <input id="importFile" type="file" accept="application/json" hidden></label>
     <button id="resetBtn" class="danger-outline">Reset to seed funds</button>
   </div>
+  <div class="toolbar auto-refresh">
+    <label><input id="autoRefresh" type="checkbox"> Auto-refresh daily while this page is open</label>
+    <label>at
+      <input id="autoTime" type="time" value="09:00" aria-label="Daily auto-refresh time">
+    </label>
+    <span id="autoNext" class="hint"></span>
+  </div>
   <p id="status" class="status" role="status"></p>
 </header>
 
