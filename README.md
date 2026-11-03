@@ -99,6 +99,45 @@ it — and the page would read from that store instead of localStorage.
 That is a bigger change with a hosted-service account to set up; say the
 word if you want it, and it can be added on top of this version.
 
+## Adding a new site parser (for GAS backup links)
+
+`GET /api/refresh?url=...` no longer assumes DollarDex. It looks at the
+URL's domain and picks a parser from `lib/parsers/index.js`. That is how
+GAS backup links work: GAS sends any fund link (primary or backup) to the
+same endpoint, Vercel picks the right parser, and GAS gets back the same
+JSON shape either way.
+
+To add a site (Fundsupermart, Morningstar, or any other):
+
+1. Copy `lib/parsers/_template.js` to `lib/parsers/<site>.js` and fill in
+   `id` and `domains`.
+2. Open one real fund page from that site, View Source, and write regexes
+   for the fund name and the price first — those are the only two fields
+   that must be right. Use the shared helpers in `lib/parsers/helpers.js`
+   (`toText`, `cleanName`, `findDate`, `findCurrency`) instead of
+   re-implementing them.
+3. Register the parser in `lib/parsers/index.js` (one import, one line in
+   the `parsers` list). The `_template.js` file itself is never
+   registered, so it does nothing until copied.
+4. Deploy (push to GitHub → Vercel redeploys automatically), then test:
+   `https://<your-site>.vercel.app/api/refresh?url=<encoded fund URL>`
+5. Before trusting it as a backup in your sheet, verify the returned price
+   against the page itself: same share class, same currency, and a price
+   that matches within the site's own price-date lag. A price from the
+   wrong share class looks plausible and is still wrong.
+
+Rules for every parser: never return a guessed price (return `price: ''`
+when unsure), always return price as a plain number string without commas
+or currency symbols, and set `lowConfidence: true` for any fallback guess.
+If no parser is registered for a domain, the endpoint returns
+`{ error: 'No parser registered...' }` with the list of supported parsers
+— GAS should treat that like a failed source and try the next link.
+
+A ready-to-adapt GAS example lives in `gas/refresh-from-vercel.gs`: a
+time trigger calls `refreshAllFunds()`, which tries each fund's primary
+URL first and its backup URL only if Vercel answers blocked/error, and
+never writes a blocked result over a good price.
+
 ## Seed data
 
 The 17 seed funds, with prices and dates as of 28–29 Oct 2026, are in
