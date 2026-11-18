@@ -37,6 +37,7 @@ const BOT_MARKERS = [
   'access denied', 'attention required', 'cf-challenge', 'challenge-platform',
   'captcha', 'please verify you are a human', 'bot detection', 'forbidden',
   'incapsula', 'distil', 'akamai', 'sucuri', 'cloudflare ray id',
+  'awswaf', 'challenge-container', 'verify that you are not a robot',
 ];
 
 export default async function handler(req, res) {
@@ -96,6 +97,9 @@ export default async function handler(req, res) {
   }
 
   const parsed = parser.parse(html, url);
+  if (parsed.blocked) {
+    return res.status(200).json({ blocked: true, parser: parser.id, note: 'The site returned a bot-check page instead of the fund page.' });
+  }
   if (!parsed.price) {
     return res.status(200).json({ error: 'Page loaded, but no price could be parsed. The page layout may have changed — open the link and enter the price manually.', parser: parser.id });
   }
