@@ -51,6 +51,59 @@ vercel
 
 Follow the prompts (accept the defaults). `vercel --prod` deploys to production.
 
+## How GitHub and Vercel share files
+
+GitHub stores the files; Vercel serves them. They are two separate
+jobs, and that is why the files cannot be found inside Vercel.
+
+**The flow, one way only (GitHub → Vercel):**
+
+1. A change is pushed to GitHub — for example a commit changing
+   `api/refresh.js` in `ooikk/Muse-Fund-Prices`.
+2. GitHub tells Vercel that the `main` branch changed.
+3. Vercel downloads that exact commit from GitHub and puts it live.
+   This project has no build step, so the files are served as-is:
+   `index.html`, `app.js` and `styles.css` as the website, and
+   `api/refresh.js` as a serverless function at `/api/refresh`.
+4. The live site updates, usually within about a minute.
+
+Nothing flows back the other way. Changing a setting in Vercel never
+edits a file on GitHub, and Vercel has no file editor for the
+repository's files — a file must be edited on GitHub (or locally and
+then pushed to GitHub) for Vercel to pick it up.
+
+**Where to find things:**
+
+- **The files themselves: GitHub, not Vercel.** The repository at
+  github.com/ooikk/Muse-Fund-Prices is the only place the files live
+  (`index.html`, `app.js`, `api/refresh.js`, `lib/parsers/`, `gas/`).
+- **In Vercel, what you can find:** open vercel.com, go to the project
+  `muse-fund-prices`, then:
+  - **Deployments** — a list of every deploy, each labelled with the
+    GitHub commit message and short SHA (for example `a57103c`,
+    `d0938c7`), branch, time and status. Click one to see its URL and
+    build logs. This is how you check that Vercel is running the
+    latest GitHub commit — match the SHA shown there to the latest
+    commit on GitHub.
+  - **Settings → Git** — shows the connected repository
+    (`ooikk/Muse-Fund-Prices`), the production branch (`main`), and
+    that auto-deploy on push is on.
+  - **Settings → Domains** — where `muse-fund-prices.vercel.app`
+    is listed.
+
+**Two things that trip people up:**
+
+- Deleting the Vercel project would not delete the GitHub repository,
+  and deleting the GitHub repository would not delete the last Vercel
+  deployment — they are linked, but separate.
+- A push to a different branch (or a pull request) creates a preview
+  deployment with its own URL; only pushes to `main` update the
+  production site.
+
+Rule of thumb: to see or change a file, go to GitHub. To check
+whether the live site has the latest version, go to Vercel →
+Deployments and match the commit SHA to GitHub.
+
 ## How the crawler works
 
 `GET /api/refresh?url=<fund page URL>` fetches ONE fund page and returns
@@ -148,7 +201,13 @@ DollarDex actively blocks automated requests. What we know from experience:
   403/429 or a bot-check page, it reports **blocked** instead of inventing
   a price. The fund keeps its last price and the UI shows
   "Blocked — open link", with an "Edit price" button to enter the price by
-  hand from the source page.
+  hand from the source page. Since 18 Nov 2026 the headers include the
+  `Sec-Fetch-*` navigation headers a real browser sends (`Sec-Fetch-Dest:
+  document`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Site: same-origin`,
+  `Sec-Fetch-User: ?1`) — those were the deciding headers: without them
+  DollarDex (Akamai Bot Manager) returned 403 even with a browser
+  User-Agent, with them it returned 200. Verified live on Vercel the
+  same day: Refresh all returned 17 updated, 0 blocked, 0 failed.
 
 If blocking gets worse, the honest upgrades in order are:
 
@@ -268,4 +327,5 @@ python3 -m http.server 8000
 | `lib/parsers/helpers.js` | Shared parser helpers (text, name, date, currency) |
 | `lib/parsers/_template.js` | Copy-me template for a new site's parser (not registered) |
 | `gas/refresh-from-vercel.gs` | Example GAS script: daily Sheet refresh via Vercel, primary then backup |
+| `gas/vercel-fund-prices.gs` | GAS script for the "VercelFundPrices" tab: refresh fund prices from the URLs in column A via Vercel |
 | `vercel.json` | Vercel configuration (no build step needed) |
