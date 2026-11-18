@@ -4,6 +4,8 @@ A small website that displays unit trust funds with their latest price,
 currency, price date and source link — the same 17 DollarDex funds that were
 previously tracked in the "Muse unit trust price update" Google Sheet.
 
+**Live site: https://muse-fund-prices.vercel.app/**
+
 Users can:
 - **Add** a fund by pasting its link (name and currency are optional on add;
   a refresh tries to read the name from the page).
@@ -37,8 +39,8 @@ server to run the crawler.
    you. Every push to GitHub redeploys automatically.
 
 This project is already deployed this way (repo `ooikk/Muse-Fund-Prices`),
-and Refresh on the Vercel address is confirmed working. Use the
-`*.vercel.app` address, not the `*.github.io` one, for anything that needs
+and Refresh on [the live site](https://muse-fund-prices.vercel.app/) is confirmed
+working. Use the live site, not the `*.github.io` one, for anything that needs
 Refresh.
 
 ### Option B — Vercel CLI
