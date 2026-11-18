@@ -104,6 +104,44 @@ Rule of thumb: to see or change a file, go to GitHub. To check
 whether the live site has the latest version, go to Vercel →
 Deployments and match the commit SHA to GitHub.
 
+## What is Vercel for?
+
+Vercel's main purpose is to take website code and put it live on the
+internet, without anyone having to manage a server. You push code to
+GitHub, Vercel turns it into a working website that anyone can open
+in a browser. That is its core job; everything else is built around
+it.
+
+Its main functions:
+
+- **Hosting** — it serves the website files (HTML, CSS, JavaScript,
+  images) from servers around the world, so the site loads fast
+  wherever the visitor is. That is what it does here with
+  `index.html`, `app.js` and `styles.css`.
+- **Automatic deploys from Git** — every push to GitHub redeploys the
+  site automatically. A push to another branch (or a pull request)
+  makes a separate preview link, so a change can be tested before it
+  goes live.
+- **Serverless functions** — small bits of backend code that run only
+  when called, with no server to look after. That is what
+  `api/refresh.js` is: it does not run all the time, it only runs when
+  someone clicks Refresh, fetches the DollarDex page, and returns the
+  price.
+- **Domains and HTTPS** — it gives the site a `*.vercel.app` address,
+  handles the security certificate, and can connect a custom domain.
+- **Previews and rollbacks** — every deploy is kept, so if a new
+  version breaks something the previous one can be restored in a
+  couple of clicks.
+
+What it is *not*: it is not a file store like GitHub or Google Drive,
+and it is not a database. It does not keep the files for editing, and
+it does not remember anything between visits — that is why the fund
+list lives in the browser's localStorage and the prices live in the
+Google Sheet, not on Vercel.
+
+In one line: GitHub is where the code lives, Vercel is what puts it
+on the web.
+
 ## How the crawler works
 
 `GET /api/refresh?url=<fund page URL>` fetches ONE fund page and returns
