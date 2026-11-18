@@ -329,9 +329,11 @@ If no parser is registered for a domain, the endpoint returns
 `{ error: 'No parser registered...' }` with the list of supported parsers
 — GAS should treat that like a failed source and try the next link.
 
-Currently registered parsers: DollarDex only. No Fundsupermart or
+Currently registered parsers: DollarDex and Fidelity. No Fundsupermart or
 Morningstar parser is implemented yet — each one must be written from a
-real page, not guessed.
+real page, not guessed. Morningstar was tried and removed: its fund pages
+answer every server fetch with an AWS WAF JavaScript challenge, so no
+server-side parser can read them; use the fund provider's own page instead.
 
 ## Seed data
 
