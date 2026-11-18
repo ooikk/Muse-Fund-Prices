@@ -58,12 +58,23 @@ export default async function handler(req, res) {
     upstream = await fetch(url, {
       redirect: 'follow',
       headers: {
-        // A real-browser set of headers: this is what gets past DollarDex
-        // most often. It is not a bypass for a challenge page — if the
-        // response is a challenge, we report blocked below.
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        // A real-browser set of headers. DollarDex sits behind Akamai
+        // Bot Manager: a bare fetch (even with a browser User-Agent)
+        // gets HTTP 403 "Access Denied" (errors.edgesuite.net).
+        // Tested 18 Nov 2026: adding the Sec-Fetch-* navigation
+        // headers turned the same request from 403 into 200, with the
+        // full fund page (price parses normally). Do NOT set
+        // Accept-Encoding manually — Node's fetch decompresses gzip
+        // itself, and a manual "br" header can break that.
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-SG,en;q=0.9',
+        'Referer': 'https://www.dollardex.com/',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
       },
       signal: AbortSignal.timeout(20000),
     });
