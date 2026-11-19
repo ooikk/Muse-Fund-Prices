@@ -3,21 +3,24 @@
  *
  * Sheet: "Muse unit trust price update" > tab "VercelFundPrices"
  * Layout (row 1 = header, data from row 2):
- *   A = fund page URL (DollarDex, or any site with a parser in the repo)
- *   B = fund name (written by this script)
- *   C = price (written by this script)
- *   D = currency (written by this script)
- *   E = price date (written by this script)
- *   F = status — "ok", or "blocked/failed — old price kept"
- *   G = last checked (written by this script, Singapore time)
+ *   A = fund code (filled in by hand, e.g. Z867 for Singlife, FITECH
+ *       for Fundsupermart — used to build the URL in column B)
+ *   B = fund page URL (DollarDex, or any site with a parser in the repo;
+ *       can be a formula built from the code in column A)
+ *   C = fund name (written by this script)
+ *   D = price (written by this script)
+ *   E = currency (written by this script)
+ *   F = price date (written by this script)
+ *   G = status — "ok", or "blocked/failed — old price kept"
+ *   H = last checked (written by this script, Singapore time)
  *
  * How it works:
- *   1. refreshAllFunds() reads every URL in column A.
+ *   1. refreshAllFunds() reads every URL in column B.
  *   2. For each URL it asks Vercel GET /api/refresh?url=...
  *      Vercel picks the parser from the URL's domain, fetches the page
  *      and returns { name, price, currency, date, parser }.
  *   3. A blocked / error result is NEVER written over a good price —
- *      the old price, name, currency and date stay, only F/G are updated.
+ *      the old price, name, currency and date stay, only G/H are updated.
  *   4. One fund at a time, 2 seconds apart, so DollarDex does not
  *      rate-limit the Vercel server.
  *
@@ -30,8 +33,9 @@
  *      Add Trigger > refreshAllFunds > Time-driven > Day timer, pick a
  *      time (e.g. 9–10am Singapore time). Or use the sheet menu:
  *      Fund Prices > Refresh all prices.
- *   4. To add a fund: paste its page URL in the next empty row of
- *      column A and run a refresh. No code change needed.
+ *   4. To add a fund: put its fund code in the next empty row of
+ *      column A, its page URL in column B (or a formula that builds
+ *      the URL from the code), and run a refresh. No code change needed.
  */
 
 var VERCEL_BASE = 'https://muse-fund-prices.vercel.app';
@@ -62,23 +66,23 @@ function fetchPriceFromVercel(url) {
 }
 
 /**
- * Refresh every URL in column A of VercelFundPrices.
- * Writes B–G per row. Returns a short summary string (also logged).
+ * Refresh every URL in column B of VercelFundPrices.
+ * Writes C–H per row. Returns a short summary string (also logged).
  */
 function refreshAllFunds() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
   if (!sheet) throw new Error('Sheet not found: ' + SHEET_NAME);
 
   var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return 'No fund URLs in column A.';
+  if (lastRow < 2) return 'No fund URLs in column B.';
 
   // Header row, so the columns are labelled even on a fresh tab.
-  sheet.getRange(1, 1, 1, 7).setValues([[
-    'URL', 'Fund name', 'Price', 'Currency', 'Price date', 'Status', 'Last checked'
+  sheet.getRange(1, 1, 1, 8).setValues([[
+    'Fund code', 'URL', 'Fund name', 'Price', 'Currency', 'Price date', 'Status', 'Last checked'
   ]]);
 
-  var urls = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-  var out = []; // one row of B–G per fund row
+  var urls = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
+  var out = []; // one row of C–H per fund row
   var updated = 0, kept = 0;
 
   for (var i = 0; i < urls.length; i++) {
@@ -99,20 +103,20 @@ function refreshAllFunds() {
       ]);
       updated++;
     } else {
-      // Keep the old B–E values: write only F and G for this row.
+      // Keep the old C–F values: write only G and H for this row.
       // We do that after the batch write below, by re-reading the row.
       out.push(null); // placeholder — handled in the second pass
-      sheet.getRange(row, 6).setValue('blocked/failed — old price kept');
-      sheet.getRange(row, 7).setValue(checked);
+      sheet.getRange(row, 7).setValue('blocked/failed — old price kept');
+      sheet.getRange(row, 8).setValue(checked);
       kept++;
       Logger.log('Row ' + row + ' blocked/failed, old price kept: ' + url);
     }
     Utilities.sleep(PAUSE_MS);
   }
 
-  // Batch-write the successful rows (B–G), skipping the failed ones.
+  // Batch-write the successful rows (C–H), skipping the failed ones.
   for (var j = 0; j < out.length; j++) {
-    if (out[j]) sheet.getRange(2 + j, 2, 1, 6).setValues([out[j]]);
+    if (out[j]) sheet.getRange(2 + j, 3, 1, 6).setValues([out[j]]);
   }
 
   var summary = 'Updated ' + updated + ' fund(s), ' + kept + ' blocked/failed (old price kept).';
