@@ -306,6 +306,7 @@ works for any of these sites. A link from any other site returns
 | DollarDex | `dollardex.com` | Page HTML. Needs Sec-Fetch navigation headers to get past Akamai Bot Manager (a plain fetch gets HTTP 403) — see "DollarDex bot detection" below. Prices are indicative and usually lag 2–4 dealing days. | A DollarDex fund overview link, e.g. the Allianz Europe Equity Growth link in the seed data |
 | Fidelity | `fidelity.co.uk` | Page HTML from the fund's factsheet page (`/factsheet-data/factsheet/<ISIN>-<slug>/portfolio`). | https://www.fidelity.co.uk/factsheet-data/factsheet/LU0099574567-global-technology-fund/portfolio |
 | Fundsupermart (FSM Global) | `fsm.global` | The site's own REST API, not the page: the factsheet page is a JavaScript app whose HTML has no fund data, so the parser calls `get-factsheet-price-date-data` for the price and `get-active-fund-info` for the name and currency, using the fund code from the link (`/sg/funds/factsheet/<CODE>/...`). No login or key needed. Caveat: this is FSM's undocumented internal API, so it could change or gain login requirements without notice; if it does, the parser returns no price rather than a guess. | https://fsm.global/sg/funds/factsheet/FITECH/Fidelity-Global-Technology-A-EUR |
+| Singlife (FE fundinfo) | `digital.feprecisionplus.com` | The site's own data service, not the page: the factsheet page is a JavaScript app whose HTML has no fund data, so the parser calls the FE fundinfo FundDataService `GetUnitList` endpoint for the price, name and currency, using the fund code from the link's `TypeCode` parameter (`?TypeCode=FSG:<CODE>`). No login or key needed. Caveat: this is FE fundinfo's internal data service for Singlife, so it could change without notice; if it does, the parser returns no price rather than a guess. | https://digital.feprecisionplus.com/singlifesimnav2/factsheethtml/en-gb/singlife/?TypeCode=FSG:Z867&specialunittype=CHDG&MPCategoryCode=&Category=&priipproductcode=&documentcountry=&Category2=public |
 
 ### Not supported: Morningstar
 
@@ -349,7 +350,7 @@ If no parser is registered for a domain, the endpoint returns
 `{ error: 'No parser registered...' }` with the list of supported parsers
 — GAS should treat that like a failed source and try the next link.
 
-Currently registered parsers: DollarDex, Fidelity and Fundsupermart —
+Currently registered parsers: DollarDex, Fidelity, Fundsupermart and Singlife —
 see the Supported sites section above for how each one works. No
 Morningstar parser is implemented yet — each new parser must be written
 from a real page, not guessed.
@@ -385,6 +386,9 @@ python3 -m http.server 8000
 | `api/refresh.js` | Vercel serverless handler: fetch, bot-check, domain-routed parsing |
 | `lib/parsers/index.js` | Parser registry — which parser handles which domain |
 | `lib/parsers/dollardex.js` | DollarDex parser |
+| `lib/parsers/fidelity.js` | Fidelity parser |
+| `lib/parsers/fundsupermart.js` | Fundsupermart parser (API-based) |
+| `lib/parsers/singlife.js` | Singlife parser (API-based) |
 | `lib/parsers/helpers.js` | Shared parser helpers (text, name, date, currency) |
 | `lib/parsers/_template.js` | Copy-me template for a new site's parser (not registered) |
 | `gas/refresh-from-vercel.gs` | Example GAS script: daily Sheet refresh via Vercel, primary then backup |
