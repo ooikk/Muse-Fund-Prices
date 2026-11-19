@@ -303,7 +303,7 @@ GAS backup links work: GAS sends any fund link (primary or backup) to the
 same endpoint, Vercel picks the right parser, and GAS gets back the same
 JSON shape either way.
 
-To add a site (Fundsupermart, Morningstar, or any other):
+To add a site (Morningstar or any other):
 
 1. Copy `lib/parsers/_template.js` to `lib/parsers/<site>.js` and fill in
    `id` and `domains`.
@@ -329,11 +329,14 @@ If no parser is registered for a domain, the endpoint returns
 `{ error: 'No parser registered...' }` with the list of supported parsers
 — GAS should treat that like a failed source and try the next link.
 
-Currently registered parsers: DollarDex and Fidelity. No Fundsupermart or
+Currently registered parsers: DollarDex, Fidelity and Fundsupermart. No
 Morningstar parser is implemented yet — each one must be written from a
 real page, not guessed. Morningstar was tried and removed: its fund pages
 answer every server fetch with an AWS WAF JavaScript challenge, so no
 server-side parser can read them; use the fund provider's own page instead.
+Fundsupermart is API-based: its factsheet page is a JS app with no data in
+its HTML, so the parser calls FSM's own REST API — see
+lib/parsers/fundsupermart.js.
 
 ## Seed data
 
