@@ -5,6 +5,10 @@
 // the parser, so GAS (or the website) just sends the link and does not
 // need to know which site it is.
 //
+// A parser may instead be API-based (see Fundsupermart): it defines an
+// async fetch(url) and the handler calls it in place of fetching the
+// page. The response shapes below are the same either way.
+//
 // Responses (all HTTP 200 except bad requests, so a caller like GAS can
 // simply try the next source on any non-price result):
 //   { name, price, currency, date, parser, source }  — price found
@@ -52,6 +56,26 @@ export default async function handler(req, res) {
       error: 'No parser registered for this site. Add one in lib/parsers/ (see _template.js) and register it in lib/parsers/index.js.',
       supported: parsers.map(p => p.id),
     });
+  }
+
+  // API-based parsers (e.g. Fundsupermart): the site's page is a JS app
+  // whose HTML carries no fund data, so the parser calls the site's own
+  // API instead of parsing a fetched page. The parser returns the same
+  // shape as parse(); the responses below mirror the page path.
+  if (typeof parser.fetch === 'function') {
+    let result;
+    try {
+      result = await parser.fetch(url);
+    } catch (e) {
+      return res.status(200).json({ error: 'Could not reach the fund data (' + (e.cause?.code || 'network error') + '). Try again, or open the link manually.', parser: parser.id });
+    }
+    if (result.blocked) {
+      return res.status(200).json({ blocked: true, parser: parser.id, note: 'The site refused the automated request (bot detection / rate limit).' });
+    }
+    if (!result.price) {
+      return res.status(200).json({ error: 'Fund data loaded, but no price could be parsed. The site API may have changed — open the link and enter the price manually.', parser: parser.id });
+    }
+    return res.status(200).json({ ...result, parser: parser.id });
   }
 
   let upstream;
