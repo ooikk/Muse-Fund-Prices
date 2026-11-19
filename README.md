@@ -295,6 +295,26 @@ refreshes the copy in one browser, while GAS refreshes the shared Sheet.
 Use GAS for the Sheet, and the website option only if you leave the page
 open.
 
+## Supported sites
+
+`/api/refresh` picks a parser by the link's domain, so the same endpoint
+works for any of these sites. A link from any other site returns
+`{ error: 'No parser registered...' }` with this list.
+
+| Site | Domain | How the price is read | Example link |
+| --- | --- | --- | --- |
+| DollarDex | `dollardex.com` | Page HTML. Needs Sec-Fetch navigation headers to get past Akamai Bot Manager (a plain fetch gets HTTP 403) — see "DollarDex bot detection" below. Prices are indicative and usually lag 2–4 dealing days. | A DollarDex fund overview link, e.g. the Allianz Europe Equity Growth link in the seed data |
+| Fidelity | `fidelity.co.uk` | Page HTML from the fund's factsheet page (`/factsheet-data/factsheet/<ISIN>-<slug>/portfolio`). | https://www.fidelity.co.uk/factsheet-data/factsheet/LU0099574567-global-technology-fund/portfolio |
+| Fundsupermart (FSM Global) | `fsm.global` | The site's own REST API, not the page: the factsheet page is a JavaScript app whose HTML has no fund data, so the parser calls `get-factsheet-price-date-data` for the price and `get-active-fund-info` for the name and currency, using the fund code from the link (`/sg/funds/factsheet/<CODE>/...`). No login or key needed. Caveat: this is FSM's undocumented internal API, so it could change or gain login requirements without notice; if it does, the parser returns no price rather than a guess. | https://fsm.global/sg/funds/factsheet/FITECH/Fidelity-Global-Technology-A-EUR |
+
+### Not supported: Morningstar
+
+Morningstar (`global.morningstar.com`) was tried and removed. Its fund
+pages answer every server fetch with an AWS WAF JavaScript challenge that
+only a real browser can pass, so no server-side parser can read them. Use
+the fund provider's own page instead — for the Fidelity Global Technology
+fund, the Fidelity and Fundsupermart links above are the working backups.
+
 ## Adding a new site parser (for GAS backup links)
 
 `GET /api/refresh?url=...` no longer assumes DollarDex. It looks at the
@@ -329,14 +349,10 @@ If no parser is registered for a domain, the endpoint returns
 `{ error: 'No parser registered...' }` with the list of supported parsers
 — GAS should treat that like a failed source and try the next link.
 
-Currently registered parsers: DollarDex, Fidelity and Fundsupermart. No
-Morningstar parser is implemented yet — each one must be written from a
-real page, not guessed. Morningstar was tried and removed: its fund pages
-answer every server fetch with an AWS WAF JavaScript challenge, so no
-server-side parser can read them; use the fund provider's own page instead.
-Fundsupermart is API-based: its factsheet page is a JS app with no data in
-its HTML, so the parser calls FSM's own REST API — see
-lib/parsers/fundsupermart.js.
+Currently registered parsers: DollarDex, Fidelity and Fundsupermart —
+see the Supported sites section above for how each one works. No
+Morningstar parser is implemented yet — each new parser must be written
+from a real page, not guessed.
 
 ## Seed data
 
