@@ -309,6 +309,7 @@ works for any of these sites. A link from any other site returns
 | Singlife (FE fundinfo) | `digital.feprecisionplus.com` | The site's own data service, not the page: the factsheet page is a JavaScript app whose HTML has no fund data, so the parser calls the FE fundinfo FundDataService `GetUnitList` endpoint for the price, name and currency, using the fund code from the link's `TypeCode` parameter (`?TypeCode=FSG:<CODE>`). No login or key needed. Caveat: this is FE fundinfo's internal data service for Singlife, so it could change without notice; if it does, the parser returns no price rather than a guess. | https://digital.feprecisionplus.com/singlifesimnav2/factsheethtml/en-gb/singlife/?TypeCode=FSG:Z867&specialunittype=CHDG&MPCategoryCode=&Category=&priipproductcode=&documentcountry=&Category2=public |
 | FundSingapore | `fundsingapore.com` | Page data: the detail page is a Next.js page with the fund data server-rendered inside `__NEXT_DATA__` (`ssrFundDetails.LastPrice` gives the price, currency and date; `Name` and `Isin` confirm the fund). No login or key needed. The site is a joint initiative of IMAS and LIA. | https://www.fundsingapore.com/fund-library/fund-details?id=F0HKG06XT2 |
 | Janus Henderson | `janushenderson.com` | Page HTML: the fund's NAV is server-rendered on the product page (the "NAV" label followed by `<strong>` with `<CURRENCY> <price>`, plus an "As of YYYY/MM/DD" date). Each share class is its own page keyed by ISIN in the `?identifier=` parameter; the selected share class comes from the page's share-class selector. No login or key needed. | https://www.janushenderson.com/en-sg/investor/product/janus-henderson-horizon-global-technology-leaders-fund/?identifier=LU1316542783 |
+| Allianz GI | `sg.allianzgi.com` | Page HTML: the fund's Unit NAV is server-rendered (visible text "Unit NAV `<price>` `<CURRENCY>`" plus "Valuation Date: DD/MM/YYYY", also in the page's JSON-LD). Quirk: the site 302-redirects on the first request and only serves the page when the request carries the cookies the site itself set on the redirect responses, so the parser follows redirects manually with a cookie jar (the site's own session cookies, no login or key). No JavaScript needed. | https://sg.allianzgi.com/en-sg/retail/products-solutions/authorised-fund/allianz-global-high-payout-fund-class-am-sgd-dis?nav=overview |
 
 ### Finding a Fidelity fund's link
 
@@ -381,7 +382,7 @@ If no parser is registered for a domain, the endpoint returns
 `{ error: 'No parser registered...' }` with the list of supported parsers
 — GAS should treat that like a failed source and try the next link.
 
-Currently registered parsers: DollarDex, Fidelity, Fundsupermart, Singlife, FundSingapore and Janus Henderson —
+Currently registered parsers: DollarDex, Fidelity, Fundsupermart, Singlife, FundSingapore, Janus Henderson and Allianz GI —
 see the Supported sites section above for how each one works. No
 Morningstar parser is implemented yet — each new parser must be written
 from a real page, not guessed.
@@ -422,6 +423,7 @@ python3 -m http.server 8000
 | `lib/parsers/singlife.js` | Singlife parser (API-based) |
 | `lib/parsers/fundsingapore.js` | FundSingapore parser (Next.js __NEXT_DATA__ LastPrice) |
 | `lib/parsers/janushenderson.js` | Janus Henderson parser (server-rendered NAV) |
+| `lib/parsers/allianzgi.js` | Allianz GI parser (server-rendered Unit NAV; cookie-aware redirects) |
 | `lib/parsers/helpers.js` | Shared parser helpers (text, name, date, currency) |
 | `lib/parsers/_template.js` | Copy-me template for a new site's parser (not registered) |
 | `gas/refresh-from-vercel.gs` | Example GAS script: daily Sheet refresh via Vercel, primary then backup |
