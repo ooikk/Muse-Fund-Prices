@@ -308,6 +308,7 @@ works for any of these sites. A link from any other site returns
 | Fundsupermart (FSM Global) | `fsm.global` | The site's own REST API, not the page: the factsheet page is a JavaScript app whose HTML has no fund data, so the parser calls `get-factsheet-price-date-data` for the price and `get-active-fund-info` for the name and currency, using the fund code from the link (`/sg/funds/factsheet/<CODE>/...`). No login or key needed. Caveat: this is FSM's undocumented internal API, so it could change or gain login requirements without notice; if it does, the parser returns no price rather than a guess. | https://fsm.global/sg/funds/factsheet/FITECH/Fidelity-Global-Technology-A-EUR |
 | Singlife (FE fundinfo) | `digital.feprecisionplus.com` | The site's own data service, not the page: the factsheet page is a JavaScript app whose HTML has no fund data, so the parser calls the FE fundinfo FundDataService `GetUnitList` endpoint for the price, name and currency, using the fund code from the link's `TypeCode` parameter (`?TypeCode=FSG:<CODE>`). No login or key needed. Caveat: this is FE fundinfo's internal data service for Singlife, so it could change without notice; if it does, the parser returns no price rather than a guess. | https://digital.feprecisionplus.com/singlifesimnav2/factsheethtml/en-gb/singlife/?TypeCode=FSG:Z867&specialunittype=CHDG&MPCategoryCode=&Category=&priipproductcode=&documentcountry=&Category2=public |
 | FundSingapore | `fundsingapore.com` | Page data: the detail page is a Next.js page with the fund data server-rendered inside `__NEXT_DATA__` (`ssrFundDetails.LastPrice` gives the price, currency and date; `Name` and `Isin` confirm the fund). No login or key needed. The site is a joint initiative of IMAS and LIA. | https://www.fundsingapore.com/fund-library/fund-details?id=F0HKG06XT2 |
+| Janus Henderson | `janushenderson.com` | Page HTML: the fund's NAV is server-rendered on the product page (the "NAV" label followed by `<strong>` with `<CURRENCY> <price>`, plus an "As of YYYY/MM/DD" date). Each share class is its own page keyed by ISIN in the `?identifier=` parameter; the selected share class comes from the page's share-class selector. No login or key needed. | https://www.janushenderson.com/en-sg/investor/product/janus-henderson-horizon-global-technology-leaders-fund/?identifier=LU1316542783 |
 
 ### Finding a Fidelity fund's link
 
@@ -380,7 +381,7 @@ If no parser is registered for a domain, the endpoint returns
 `{ error: 'No parser registered...' }` with the list of supported parsers
 — GAS should treat that like a failed source and try the next link.
 
-Currently registered parsers: DollarDex, Fidelity, Fundsupermart, Singlife and FundSingapore —
+Currently registered parsers: DollarDex, Fidelity, Fundsupermart, Singlife, FundSingapore and Janus Henderson —
 see the Supported sites section above for how each one works. No
 Morningstar parser is implemented yet — each new parser must be written
 from a real page, not guessed.
@@ -420,6 +421,7 @@ python3 -m http.server 8000
 | `lib/parsers/fundsupermart.js` | Fundsupermart parser (API-based) |
 | `lib/parsers/singlife.js` | Singlife parser (API-based) |
 | `lib/parsers/fundsingapore.js` | FundSingapore parser (Next.js __NEXT_DATA__ LastPrice) |
+| `lib/parsers/janushenderson.js` | Janus Henderson parser (server-rendered NAV) |
 | `lib/parsers/helpers.js` | Shared parser helpers (text, name, date, currency) |
 | `lib/parsers/_template.js` | Copy-me template for a new site's parser (not registered) |
 | `gas/refresh-from-vercel.gs` | Example GAS script: daily Sheet refresh via Vercel, primary then backup |
