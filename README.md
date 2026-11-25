@@ -304,10 +304,27 @@ works for any of these sites. A link from any other site returns
 | Site | Domain | How the price is read | Example link |
 | --- | --- | --- | --- |
 | DollarDex | `dollardex.com` | Page HTML. Needs Sec-Fetch navigation headers to get past Akamai Bot Manager (a plain fetch gets HTTP 403) — see "DollarDex bot detection" below. Prices are indicative and usually lag 2–4 dealing days. | A DollarDex fund overview link, e.g. the Allianz Europe Equity Growth link in the seed data |
-| Fidelity | `fidelity.co.uk` | Page HTML from the fund's factsheet page (`/factsheet-data/factsheet/<ISIN>-<slug>/portfolio`). | https://www.fidelity.co.uk/factsheet-data/factsheet/LU0099574567-global-technology-fund/portfolio |
+| Fidelity | `fidelity.co.uk` | Page HTML from the fund's factsheet page — the short form `/factsheet-data/factsheet/<ISIN>` works, no fund-name slug or `/portfolio` suffix needed (see "Finding a Fidelity fund's link" below). | https://www.fidelity.co.uk/factsheet-data/factsheet/LU0099574567-global-technology-fund/portfolio |
 | Fundsupermart (FSM Global) | `fsm.global` | The site's own REST API, not the page: the factsheet page is a JavaScript app whose HTML has no fund data, so the parser calls `get-factsheet-price-date-data` for the price and `get-active-fund-info` for the name and currency, using the fund code from the link (`/sg/funds/factsheet/<CODE>/...`). No login or key needed. Caveat: this is FSM's undocumented internal API, so it could change or gain login requirements without notice; if it does, the parser returns no price rather than a guess. | https://fsm.global/sg/funds/factsheet/FITECH/Fidelity-Global-Technology-A-EUR |
 | Singlife (FE fundinfo) | `digital.feprecisionplus.com` | The site's own data service, not the page: the factsheet page is a JavaScript app whose HTML has no fund data, so the parser calls the FE fundinfo FundDataService `GetUnitList` endpoint for the price, name and currency, using the fund code from the link's `TypeCode` parameter (`?TypeCode=FSG:<CODE>`). No login or key needed. Caveat: this is FE fundinfo's internal data service for Singlife, so it could change without notice; if it does, the parser returns no price rather than a guess. | https://digital.feprecisionplus.com/singlifesimnav2/factsheethtml/en-gb/singlife/?TypeCode=FSG:Z867&specialunittype=CHDG&MPCategoryCode=&Category=&priipproductcode=&documentcountry=&Category2=public |
 | FundSingapore | `fundsingapore.com` | Page data: the detail page is a Next.js page with the fund data server-rendered inside `__NEXT_DATA__` (`ssrFundDetails.LastPrice` gives the price, currency and date; `Name` and `Isin` confirm the fund). No login or key needed. The site is a joint initiative of IMAS and LIA. | https://www.fundsingapore.com/fund-library/fund-details?id=F0HKG06XT2 |
+
+### Finding a Fidelity fund's link
+
+To track a Fidelity fund, find its ISIN on the Fidelity Singapore fund
+list (`https://www.fidelity.com.sg/funds/mutual-fund/`), then use the UK
+factsheet short link `https://www.fidelity.co.uk/factsheet-data/factsheet/<ISIN>`
+— no fund-name slug or `/portfolio` suffix is needed, and the tracker
+reads the short link the same way. Examples verified 25 Nov 2026: China
+Focus Fund A-SGD (LU0287142896, 1.694 SGD, 24 Nov 2026) and China Focus
+Fund SR-Acc-SGD (LU1235261390, 2.047 SGD, 24 Nov 2026).
+
+Do not use Fidelity UK's fund-prices page (`fidelity.co.uk/fund-prices`)
+to find a share class: it has no text search (only Fund type / Fund
+provider dropdowns) and it lists only the share classes Fidelity UK
+offers, so SGD classes do not appear there at all — the China Focus Fund
+shows only A-GBP, A-USD, Y-ACC-Euro, Y-ACC-USD, Y-GBP and Y-USD. The
+direct factsheet link above is the way to track an SGD class.
 
 ### Not supported: Morningstar
 
@@ -316,6 +333,18 @@ pages answer every server fetch with an AWS WAF JavaScript challenge that
 only a real browser can pass, so no server-side parser can read them. Use
 the fund provider's own page instead — for the Fidelity Global Technology
 fund, the Fidelity and Fundsupermart links above are the working backups.
+
+### Not supported: Fidelity Singapore
+
+`fidelity.com.sg` cannot be used as a source. Its fund pages sit behind
+Akamai Bot Manager (a server fetch gets HTTP 403 even with the Sec-Fetch
+headers that work for DollarDex), the price is JavaScript-rendered behind
+a Personal Investors role gate, and no JSON API endpoint was found — the
+`?role=private` parameter and the Fidelity Hong Kong site (`fidelity.com.hk`)
+do not get around it either. Use the UK factsheet link above instead:
+the same fund's price is published there (e.g. Global Technology A-EUR
+€90.83, 24 Nov 2026, matching the SG page). The SG site is still useful
+for finding a fund's ISIN — see "Finding a Fidelity fund's link" above.
 
 ## Adding a new site parser (for GAS backup links)
 
