@@ -376,14 +376,20 @@ canvas.addEventListener('mousemove', e => {
     }
   }
   if (!best || bestDx > 40) { tip.hidden = true; return; }
+  // Best performer at the hovered date first: rows are sorted by each
+  // fund's value at that date, highest first.
   const rows = plotted.map((f, i) => {
     const pts = series[f.id];
     let nearest = pts[0];
     for (const p of pts) {
       if (Math.abs(p.t - best.t) < Math.abs(nearest.t - best.t)) nearest = p;
     }
-    return `<span style="color:${COLORS[i % COLORS.length]}">●</span> ${esc(label(f))}: ${nearest.value.toFixed(2)}`;
-  }).join('<br>');
+    return { f, i, value: nearest.value };
+  })
+    .sort((a, b) => b.value - a.value)
+    .map(({ f, i, value }) =>
+      `<span style="color:${COLORS[i % COLORS.length]}">●</span> ${esc(label(f))}: ${value.toFixed(2)}`)
+    .join('<br>');
   tip.innerHTML = `<strong>${esc(best.date)}</strong><br>${rows}`;
   tip.hidden = false;
   tip.style.left = Math.min(e.clientX - rect.left + 12, rect.width - 220) + 'px';
