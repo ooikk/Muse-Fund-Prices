@@ -341,6 +341,19 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAYS = [1000, 2000]; // pause before attempt 2, before attempt 3
 
+// Cache version for timeseries requests. The Vercel CDN caches
+// /api/timeseries responses by URL, and a stale edge entry — e.g. one
+// cached while FundSingapore briefly returned an empty series for a
+// fund — keeps serving "No data" for that fund until it expires; Refresh
+// and a newly opened page do not help, because the URL is unchanged
+// (seen live 27 Nov 2026: fund 0P0000KV3F showed "No data" on the
+// Singapore edge while the same request returned 92 points elsewhere).
+// Bumping this version moves every request to a fresh cache key. Bump it
+// again if the proxy's data source or response shape changes and a stale
+// edge entry ever needs bypassing again. The proxy ignores this param
+// (it reads only ids/start/end).
+const TIMESERIES_CACHE_VERSION = 2;
+
 // Fetch one timeseries request for the given ids over [start, end],
 // retrying failed attempts automatically (up to 3 attempts, 1s then 2s
 // pauses). One request usually succeeds, but a cold start (CDN MISS,
@@ -369,7 +382,7 @@ async function fetchTimeseriesWithRetry(ids, start, end, opts = {}) {
     if (opts.onAttempt) opts.onAttempt(attemptController);
     const timer = setTimeout(() => { timedOut = true; attemptController.abort(); }, 30000);
     try {
-      const res = await fetch(`/api/timeseries?ids=${encodeURIComponent(ids.join(','))}&start=${start}&end=${end}`, { signal: attemptController.signal });
+      const res = await fetch(`/api/timeseries?ids=${encodeURIComponent(ids.join(','))}&start=${start}&end=${end}&v=${TIMESERIES_CACHE_VERSION}`, { signal: attemptController.signal });
       const data = await res.json();
       if (opts.isStale && opts.isStale()) return { stopped: true };
       if (data.error) { lastError = data.error; }
