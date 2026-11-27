@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compare Funds — Unit Trust Fund Tracker</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <h1>Compare Funds</h1>
+  <p class="subtitle">Plot fund performance over a period, rebased to 100 at the start date so funds with very different prices can be compared on one chart. History comes from FundSingapore.</p>
+  <p><a href="index.html">&larr; Back to fund tracker</a></p>
+  <p id="status" class="status" role="status"></p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Funds to compare</h2>
+    <form id="addForm">
+      <label class="wide">FundSingapore fund IDs, or a FundSingapore fund link (several at once, separated by commas)
+        <input id="newIds" type="text" placeholder="F0HKG06XT2, F0HKG062P2 — or https://www.fundsingapore.com/fund-library/fund-details?id=F0HKG06XT2">
+      </label>
+      <button type="submit" class="primary">Add funds</button>
+    </form>
+    <p class="hint">Only funds listed on FundSingapore can be plotted — the history comes from its fund library, using the fund ID from the fund's page link (<code>id=…</code>). A fund FundSingapore has stopped updating (e.g. Janus) has no history and shows as "No data".</p>
+    <div id="fundList" class="fund-list"></div>
+  </section>
+
+  <section class="card">
+    <h2>Period</h2>
+    <div class="toolbar" id="periodBar" role="group" aria-label="Comparison period">
+      <button type="button" class="period-btn" data-period="1M">1M</button>
+      <button type="button" class="period-btn" data-period="3M">3M</button>
+      <button type="button" class="period-btn" data-period="6M">6M</button>
+      <button type="button" class="period-btn active" data-period="1Y">1Y</button>
+      <button type="button" class="period-btn" data-period="3Y">3Y</button>
+      <button type="button" class="period-btn" data-period="5Y">5Y</button>
+      <button type="button" class="period-btn" data-period="YTD">YTD</button>
+      <button type="button" id="refreshBtn" class="primary">Refresh</button>
+    </div>
+    <p class="hint">Each fund's line starts at 100 on the first day of the period. Returns are growth in each fund's own currency — there is no currency conversion.</p>
+    <div class="chart-wrap">
+      <canvas id="chart" width="1000" height="420" aria-label="Fund performance chart"></canvas>
+      <div id="chartTip" class="chart-tip" hidden></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Fund</th><th>Return</th><th>From</th><th>To</th><th>Data points</th></tr>
+        </thead>
+        <tbody id="returnRows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p>Your comparison fund list is stored in this browser (localStorage) on this device, like the main tracker list. History is fetched live from FundSingapore (<code>/api/timeseries</code> proxy) each time you change period or refresh; nothing is stored on the server. FundSingapore's API is undocumented and could change — if it stops working the page says so instead of drawing a wrong chart.</p>
+</footer>
+
+<script src="compare.js"></script>
+</body>
+</html>
