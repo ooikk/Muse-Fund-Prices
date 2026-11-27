@@ -56,7 +56,7 @@
 </main>
 
 <footer>
-  <p>Your comparison fund list is stored in this browser (localStorage) on this device, like the main tracker list. History is fetched live from FundSingapore (<code>/api/timeseries</code> proxy) each time you change period or refresh; nothing is stored on the server. FundSingapore's API is undocumented and could change — if it stops working the page says so instead of drawing a wrong chart.</p>
+  <p>Your comparison fund list is stored in this browser (localStorage) on this device. When the page is opened with a shared-list link (<code>?u=…</code>), the list is shared through Upstash Redis under that code — the same code as the main tracker list — so it loads on any device; if no shared list exists for the code yet, this browser's list is uploaded once. History is fetched live from FundSingapore (<code>/api/timeseries</code> proxy) each time you change period or refresh; nothing is stored on the server. FundSingapore's API is undocumented and could change — if it stops working the page says so instead of drawing a wrong chart.</p>
 </footer>
 
 <script src="compare.js"></script>
