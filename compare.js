@@ -19,10 +19,18 @@ const CODE_KEY = 'unit-trust-list-code-v1';
 const CODE_RE = /^[a-z0-9]{16}$/;
 let listCode = null;
 let compareSaveTimer = null;
-// Set when the ?u= code in the address bar is invalid: fetchSeries would
-// otherwise overwrite the warning with its own status when the series
-// load finishes, so it re-applies the warning once, after the first load.
-let stickyInvalidCode = false;
+// Warnings that must survive the series load that follows them. The
+// ?u= path sets its warning before fetchSeries runs, and fetchSeries
+// would overwrite it with its own status — so the next fetchSeries
+// captures it at the start and re-applies it once, at the end.
+// (Captured at the start, so a later user action can never resurrect
+// a stale warning.)
+let pendingWarning = null;
+// Set when a background shared-list load fails while a series load is in
+// flight: the load's final status would overwrite the warning, so it is
+// re-applied once — but only by the request that was in flight when the
+// failure happened (a newer request clears it as stale).
+let stickyListError = null; // { msg, controller }
 
 function rememberedCode() {
   try {
@@ -78,10 +86,16 @@ function formatPrice(info) {
 }
 // { start, end } of the last loaded period, for the status line.
 let lastRange = null;
-// In-flight series request. A new request (period change, Refresh, fund
-// add/remove) aborts the previous one — the newest request always wins,
-// so a period tap is never silently swallowed while a fetch is in flight.
+// Identity token for the current fetchSeries call. A new fetchSeries
+// replaces it, and every step of an older call bails out when it sees
+// the token has changed — so a superseded request never touches the
+// status line, the chart, or a retry.
 let seriesController = null;
+// The AbortController of the attempt currently in flight. It is
+// per-attempt, not per-request: a timeout abort ends that attempt only,
+// so the retry gets a fresh controller (an aborted controller stays
+// aborted forever and would fail every retry at once).
+let seriesAttemptController = null;
 let seriesTimeout = null;
 let loading = false;
 
@@ -332,6 +346,11 @@ function setPlotStatus() {
 
 // --- fetching --------------------------------------------------------------
 
+// A pause that can be abandoned: if a newer request supersedes this one
+// while it is waiting, the loop below checks the controller and bails
+// out silently instead of firing a stale retry.
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 async function fetchSeries() {
   renderTable();
   if (!funds.length) {
@@ -341,55 +360,104 @@ async function fetchSeries() {
     setStatus('No funds to compare yet.');
     return;
   }
-  // Abort any in-flight fetch: the newest request always wins. A period
+  // Abort any in-flight attempt: the newest request always wins. A period
   // tap, Refresh, or fund-list edit is never silently ignored.
-  if (seriesController) seriesController.abort();
-  const controller = new AbortController();
+  if (seriesAttemptController) seriesAttemptController.abort();
+  const controller = {};
   seriesController = controller;
-  let timedOut = false;
-  clearTimeout(seriesTimeout);
-  seriesTimeout = setTimeout(() => { timedOut = true; controller.abort(); }, 30000);
+  // A warning set just before this load (e.g. an invalid ?u= code) is
+  // re-applied once, at the end, instead of being overwritten by the
+  // load's own status. Captured here so a later request can never
+  // resurrect it.
+  const warning = pendingWarning;
+  pendingWarning = null;
   loading = true;
   setStatus(`Loading ${period} history…`);
   drawChart();
   const { start, end } = periodRange(period);
   lastRange = { start, end };
-  try {
-    const ids = funds.map(f => f.id).join(',');
-    const res = await fetch(`/api/timeseries?ids=${encodeURIComponent(ids)}&start=${start}&end=${end}`, { signal: controller.signal });
-    const data = await res.json();
-    if (seriesController !== controller) return; // superseded by a newer request
-    if (data.error) { setStatus(data.error); return; }
-    series = {};
-    for (const f of funds) {
-      // Cache each point's timestamp once. The chart and the tooltip both
-      // need it, and re-parsing the date string on every use is what froze
-      // the page (see the mousemove handler below).
-      series[f.id] = ((data.funds && data.funds[f.id] && data.funds[f.id].points) || [])
-        .map(p => ({ date: p.date, value: p.value, t: Date.parse(p.date + 'T00:00:00Z') }));
-    }
-    setPlotStatus();
-  } catch (e) {
-    if (e.name === 'AbortError') {
-      // User-aborted (superseded): the newer fetch owns the status.
-      // Timed out: the request hung, so say so instead of spinning.
-      if (timedOut && seriesController === controller) setStatus('Loading timed out after 30 seconds. Try Refresh again.');
-      return;
-    }
-    if (seriesController !== controller) return;
-    setStatus('Could not load history (network error). Try Refresh again.');
-  } finally {
+  // One request usually succeeds, but a cold start (CDN MISS, first load
+  // of the day) takes ~8–11s and the upstream can be slower or fail
+  // outright — and the page used to show an error and stop, leaving the
+  // user to press Refresh. So retry automatically, up to 3 attempts
+  // total, with a growing pause between attempts. A retry never fights
+  // the user's own actions: a new fetchSeries replaces the request
+  // token, and every step below checks that this token is still current
+  // before touching the status line, the chart, or firing again. Each
+  // attempt gets its own AbortController, so a timeout abort ends that
+  // attempt only — the retry starts fresh.
+  const MAX_ATTEMPTS = 3;
+  const RETRY_DELAYS = [1000, 2000]; // pause before attempt 2, before attempt 3
+  let lastError = null; // message to show if every attempt fails
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (seriesController !== controller) return; // superseded while waiting
+    let timedOut = false;
+    const attemptController = new AbortController();
+    seriesAttemptController = attemptController;
     clearTimeout(seriesTimeout);
-    if (seriesController === controller) {
-      seriesController = null;
-      loading = false;
-      renderTable();
-      drawChart();
-      if (stickyInvalidCode) {
-        stickyInvalidCode = false;
-        setStatus('That list link has an invalid code — showing your local compare list.');
+    seriesTimeout = setTimeout(() => { timedOut = true; attemptController.abort(); }, 30000);
+    try {
+      const ids = funds.map(f => f.id).join(',');
+      const res = await fetch(`/api/timeseries?ids=${encodeURIComponent(ids)}&start=${start}&end=${end}`, { signal: attemptController.signal });
+      const data = await res.json();
+      if (seriesController !== controller) return; // superseded by a newer request
+      if (data.error) { lastError = data.error; }
+      else {
+        series = {};
+        for (const f of funds) {
+          // Cache each point's timestamp once. The chart and the tooltip both
+          // need it, and re-parsing the date string on every use is what froze
+          // the page (see the mousemove handler below).
+          series[f.id] = ((data.funds && data.funds[f.id] && data.funds[f.id].points) || [])
+            .map(p => ({ date: p.date, value: p.value, t: Date.parse(p.date + 'T00:00:00Z') }));
+        }
+        setPlotStatus();
+        lastError = null;
       }
+    } catch (e) {
+      // An abort with a newer request token already in place means this
+      // request was superseded (period tap, Refresh, fund edit): the
+      // newer fetch owns the status line, so stay silent.
+      if (seriesController !== controller) return;
+      // Anything else is a failure worth retrying. An AbortError here can
+      // only be this attempt's own 30s timer — a user abort always comes
+      // with a superseding fetchSeries first (see above).
+      if (e.name === 'AbortError') {
+        lastError = timedOut
+          ? 'Loading timed out after 30 seconds. Try Refresh again.'
+          : 'Loading was interrupted. Try Refresh again.';
+      } else {
+        lastError = 'Could not load history (network error). Try Refresh again.';
+      }
+    } finally {
+      clearTimeout(seriesTimeout);
+      if (seriesAttemptController === attemptController) seriesAttemptController = null;
     }
+    if (lastError === null) break; // loaded
+    if (attempt >= MAX_ATTEMPTS) break; // out of retries
+    if (seriesController !== controller) return; // superseded while failing
+    setStatus(`Loading ${period} history… retrying (attempt ${attempt + 1} of ${MAX_ATTEMPTS})`);
+    await sleep(RETRY_DELAYS[attempt - 1]);
+  }
+  // Still the current request: publish the final state. A superseded
+  // request returns above and never reaches here, so it cannot overwrite
+  // the newer request's status or chart.
+  if (seriesController !== controller) return;
+  seriesController = null;
+  seriesAttemptController = null;
+  loading = false;
+  if (lastError !== null) setStatus(lastError);
+  renderTable();
+  drawChart();
+  // A warning captured at the start of this load (e.g. an invalid ?u=
+  // code) is shown once, instead of being overwritten by the load's own
+  // status. A background shared-list failure from a newer request is
+  // not this load's to show — it is cleared here as stale.
+  if (warning) setStatus(warning);
+  else if (stickyListError) {
+    const stale = stickyListError;
+    stickyListError = null;
+    if (stale.controller === controller) setStatus(stale.msg);
   }
 }
 
@@ -684,8 +752,10 @@ window.addEventListener('resize', drawChart);
   const urlCode = (params.get('u') || '').trim().toLowerCase();
   if (urlCode) {
     if (!CODE_RE.test(urlCode)) {
-      stickyInvalidCode = true;
-      setStatus('That list link has an invalid code — showing your local compare list.');
+      // The fetchSeries below would overwrite this warning, so it is
+      // captured at the start of that load and re-applied once, at the end.
+      pendingWarning = 'That list link has an invalid code — showing your local compare list.';
+      setStatus(pendingWarning);
     } else {
       setStatus('Loading your shared compare list…');
       const result = await loadSharedCompare(urlCode);
@@ -698,7 +768,8 @@ window.addEventListener('resize', drawChart);
         rememberCode(urlCode);
         migrateLocalCompare();
       } else {
-        setStatus("Couldn't load the shared compare list — showing the copy saved in this browser.");
+        pendingWarning = "Couldn't load the shared compare list — showing the copy saved in this browser.";
+        setStatus(pendingWarning);
       }
     }
     renderList();
@@ -716,13 +787,27 @@ window.addEventListener('resize', drawChart);
   listCode = code;
   const result = await loadSharedCompare(code);
   if (result.funds) {
+    // The first fetchSeries above already runs for the local list. If the
+    // remote list is the same funds in the same order, a second fetch
+    // would only abort the first one and start over — skip it and just
+    // re-render the table (remote names may differ from local ones).
+    const before = funds.map(f => f.id).join(',');
     applyRemoteCompare(result.funds);
     renderList();
-    fetchSeries();
+    if (funds.map(f => f.id).join(',') === before) {
+      renderTable();
+    } else {
+      fetchSeries();
+    }
     lookupFundInfo(funds);
   } else if (result.notFound) {
     migrateLocalCompare();
   } else {
-    setStatus("Couldn't reach the shared compare list — showing the copy saved in this browser.");
+    // The warning is set now; if a series load is in flight, its final
+    // status would overwrite it, so that load re-applies it once — but
+    // only that load (a newer request clears it as stale).
+    const msg = "Couldn't reach the shared compare list — showing the copy saved in this browser.";
+    setStatus(msg);
+    if (loading) stickyListError = { msg, controller: seriesController };
   }
 })();
