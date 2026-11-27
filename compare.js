@@ -189,28 +189,7 @@ function esc(s) {
 
 function label(f) { return f.name || f.id; }
 
-// --- fund list -----------------------------------------------------------
-
-function renderList() {
-  const box = document.getElementById('fundList');
-  if (!funds.length) {
-    box.innerHTML = '<p class="hint">No funds yet — add FundSingapore fund IDs above.</p>';
-    return;
-  }
-  box.innerHTML = funds.map((f, i) =>
-    `<span class="fund-chip"><span class="chip-dot" style="background:${COLORS[i % COLORS.length]}"></span>` +
-    `<span title="${esc(f.id)}">${esc(label(f))}</span>` +
-    `<button type="button" class="small danger-outline" data-del="${esc(f.id)}" aria-label="Remove ${esc(label(f))}">Remove</button></span>`
-  ).join('');
-  box.querySelectorAll('[data-del]').forEach(btn => btn.addEventListener('click', () => {
-    hiddenFunds.delete(btn.getAttribute('data-del'));
-    fundPrices.delete(btn.getAttribute('data-del'));
-    funds = funds.filter(f => f.id !== btn.getAttribute('data-del'));
-    save();
-    renderList();
-    fetchSeries();
-  }));
-}
+// --- add funds -----------------------------------------------------------
 
 // Split the input into tokens, pull a fund ID out of each one. A token may
 // be a bare ID ("F0HKG06XT2") or a full FundSingapore link, from which the
@@ -241,7 +220,6 @@ document.getElementById('addForm').addEventListener('submit', e => {
   if (added.length) {
     funds = funds.concat(added);
     save();
-    renderList();
     fetchSeries();
     // Names and prices arrive in the background; the chart is not blocked on them.
     lookupFundInfo(added);
@@ -286,7 +264,7 @@ async function lookupFundInfo(list) {
       });
     }
   }
-  if (named) { save(); renderList(); }
+  if (named) { save(); }
   renderTable();
 }
 
@@ -514,6 +492,10 @@ function renderTable() {
     const base = th.textContent.replace(/ [▲▼]$/, '');
     th.textContent = base + (tableSort.key === key ? (dir === 1 ? ' ▲' : ' ▼') : '');
   });
+  if (!funds.length) {
+    body.innerHTML = '<tr><td colspan="6">No funds yet — add FundSingapore fund IDs above.</td></tr>';
+    return;
+  }
   body.innerHTML = rows.map(({ f, i, points, r, info }) => {
     const color = COLORS[i % COLORS.length];
     const hidden = hiddenFunds.has(f.id);
@@ -527,8 +509,12 @@ function renderTable() {
     // shows "No data" for Return and still shows its price and date.
     const sign = r !== null && r > 0 ? '+' : '';
     const retCell = r === null ? 'No data' : `${sign}${r.toFixed(2)}%`;
+    // The Remove button is this fund's delete control (it used to live
+    // on the fund chips above the chart). No confirmation dialog — the
+    // old button had none.
+    const del = `<td><button type="button" class="small danger-outline" data-del="${esc(f.id)}" aria-label="Remove ${esc(label(f))}">Remove</button></td>`;
     return `<tr${rowClass}>${tick}${fundCell}` +
-      `<td class="price">${retCell}</td><td class="price">${esc(formatPrice(info))}</td><td>${info?.date ? esc(info.date) : '—'}</td></tr>`;
+      `<td class="price">${retCell}</td><td class="price">${esc(formatPrice(info))}</td><td>${info?.date ? esc(info.date) : '—'}</td>${del}</tr>`;
   }).join('');
   // Hiding is a display choice only: it never touches localStorage or
   // Redis, and the set is the single source of truth — re-renders (sort,
@@ -540,6 +526,17 @@ function renderTable() {
     cb.closest('tr').classList.toggle('hidden-fund', !cb.checked);
     if (!loading) setPlotStatus();
     drawChart();
+  }));
+  // Remove is a delete, not a display choice: drop the fund's hidden
+  // state and price, save the shortened list, and refetch the series.
+  // fetchSeries re-renders the table first, so the row disappears at once.
+  body.querySelectorAll('[data-del]').forEach(btn => btn.addEventListener('click', () => {
+    const id = btn.getAttribute('data-del');
+    hiddenFunds.delete(id);
+    fundPrices.delete(id);
+    funds = funds.filter(f => f.id !== id);
+    save();
+    fetchSeries();
   }));
 }
 
@@ -772,12 +769,10 @@ window.addEventListener('resize', drawChart);
         setStatus(pendingWarning);
       }
     }
-    renderList();
     fetchSeries();
     lookupFundInfo(funds);
     return;
   }
-  renderList();
   fetchSeries();
   // Names and latest prices for every fund (prices are per-day data, so
   // they are fetched on every page load, not only for nameless funds).
@@ -793,7 +788,6 @@ window.addEventListener('resize', drawChart);
     // re-render the table (remote names may differ from local ones).
     const before = funds.map(f => f.id).join(',');
     applyRemoteCompare(result.funds);
-    renderList();
     if (funds.map(f => f.id).join(',') === before) {
       renderTable();
     } else {
