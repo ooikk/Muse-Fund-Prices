@@ -47,7 +47,7 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th class="show-col" title="Tick to show the fund's line on the chart">Show</th><th data-sort="fund">Fund</th><th data-sort="return">Return</th><th data-sort="from">From</th><th data-sort="to">To</th><th data-sort="points">Data points</th></tr>
+          <tr><th class="show-col" title="Tick to show the fund's line on the chart">Show</th><th data-sort="fund">Fund</th><th data-sort="return">Return</th><th data-sort="price">Price</th><th data-sort="date">Date</th></tr>
         </thead>
         <tbody id="returnRows"></tbody>
       </table>
@@ -56,7 +56,7 @@
 </main>
 
 <footer>
-  <p>Your comparison fund list is stored in this browser (localStorage) on this device. When the page is opened with a shared-list link (<code>?u=…</code>), the list is shared through Upstash Redis under that code — the same code as the main tracker list — so it loads on any device; if no shared list exists for the code yet, this browser's list is uploaded once. History is fetched live from FundSingapore (<code>/api/timeseries</code> proxy) each time you change period or refresh; nothing is stored on the server. FundSingapore's API is undocumented and could change — if it stops working the page says so instead of drawing a wrong chart.</p>
+  <p>Your comparison fund list is stored in this browser (localStorage) on this device. When the page is opened with a shared-list link (<code>?u=…</code>), the list is shared through Upstash Redis under that code — the same code as the main tracker list — so it loads on any device; if no shared list exists for the code yet, this browser's list is uploaded once. History is fetched live from FundSingapore (<code>/api/timeseries</code> proxy) each time you change period or refresh; the Price and Date columns show each fund's latest price from FundSingapore, fetched when the page loads and when you press Refresh. Nothing is stored on the server. FundSingapore's API is undocumented and could change — if it stops working the page says so instead of drawing a wrong chart.</p>
 </footer>
 
 <script src="compare.js"></script>
