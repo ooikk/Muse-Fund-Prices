@@ -311,6 +311,10 @@ works for any of these sites. A link from any other site returns
 | Janus Henderson | `janushenderson.com` | Page HTML: the fund's NAV is server-rendered on the product page (the "NAV" label followed by `<strong>` with `<CURRENCY> <price>`, plus an "As of YYYY/MM/DD" date). Each share class is its own page keyed by ISIN in the `?identifier=` parameter; the selected share class comes from the page's share-class selector. No login or key needed. | https://www.janushenderson.com/en-sg/investor/product/janus-henderson-horizon-global-technology-leaders-fund/?identifier=LU1316542783 |
 | Allianz GI | `sg.allianzgi.com` | Page HTML: the fund's Unit NAV is server-rendered (visible text "Unit NAV `<price>` `<CURRENCY>`" plus "Valuation Date: DD/MM/YYYY", also in the page's JSON-LD). Quirk: the site 302-redirects on the first request and only serves the page when the request carries the cookies the site itself set on the redirect responses, so the parser follows redirects manually with a cookie jar (the site's own session cookies, no login or key). No JavaScript needed. | https://sg.allianzgi.com/en-sg/retail/products-solutions/authorised-fund/allianz-global-high-payout-fund-class-am-sgd-dis?nav=overview |
 
+### Compare funds (`compare.html`)
+
+The **Compare funds** button on the main page opens a chart that plots several funds' performance over a period (1M, 3M, 6M, 1Y, 3Y, 5Y, YTD), each line rebased to 100 at the start of the period. History comes from FundSingapore's own timeseries API through the same-origin `/api/timeseries` proxy (`api/timeseries.js`) — a plain GET, no login or key. Add funds by FundSingapore fund ID, several at once separated by commas, or paste a FundSingapore fund link and the ID is taken from it; each listed fund has a Remove button, and the list is kept in this browser's localStorage. Two things to know: each fund's line is in its own currency (no currency conversion), and a fund FundSingapore has stopped updating has no history — Janus (F00000WJQK) currently returns an empty series and shows as "No data". FundSingapore's API is undocumented, so it could change without notice; if it does, the page shows an error instead of a wrong chart.
+
 ### Finding a Fidelity fund's link
 
 To track a Fidelity fund, find its ISIN on the Fidelity Singapore fund
@@ -416,6 +420,9 @@ python3 -m http.server 8000
 | `styles.css` | Styling |
 | `app.js` | Fund list, add/delete/refresh UI, localStorage, seed data, daily auto-refresh |
 | `api/refresh.js` | Vercel serverless handler: fetch, bot-check, domain-routed parsing |
+| `api/timeseries.js` | Vercel serverless handler: FundSingapore history proxy for the Compare page |
+| `compare.html` | Compare page: fund list, period buttons, chart, returns table |
+| `compare.js` | Compare page logic: fund list in localStorage, period ranges, canvas chart |
 | `lib/parsers/index.js` | Parser registry — which parser handles which domain |
 | `lib/parsers/dollardex.js` | DollarDex parser |
 | `lib/parsers/fidelity.js` | Fidelity parser |
