@@ -63,6 +63,19 @@ let series = {}; // id -> [{ date, value }]
 // load shows every fund again. The table row stays visible (dimmed) so
 // the fund can be ticked back on.
 const hiddenFunds = new Set();
+// Latest price per fund, by fund id. Temporary and in-memory only, like
+// hiddenFunds: NEVER written to localStorage or Redis, so save() can never
+// persist a stale price. Prices come from /api/fund-name (FundSingapore's
+// LastPrice) and are fetched on page load, when funds are added, and when
+// Refresh is pressed — never on a period change, since the price does not
+// depend on the period.
+const fundPrices = new Map(); // id -> { price, currency, date }
+const CURRENCY_PREFIX = { SGD: 'S$', USD: 'USD', EUR: '€', GBP: '£', HKD: 'HK$', AUD: 'A$', JPY: '¥' };
+function formatPrice(info) {
+  if (!info || typeof info.price !== 'number') return '—';
+  const prefix = CURRENCY_PREFIX[info.currency] || info.currency || '';
+  return prefix + String(info.price);
+}
 // { start, end } of the last loaded period, for the status line.
 let lastRange = null;
 // In-flight series request. A new request (period change, Refresh, fund
@@ -141,6 +154,9 @@ function applyRemoteCompare(list) {
   for (const id of [...hiddenFunds]) {
     if (!funds.some(f => f.id === id)) hiddenFunds.delete(id);
   }
+  for (const id of [...fundPrices.keys()]) {
+    if (!funds.some(f => f.id === id)) fundPrices.delete(id);
+  }
   saveLocal();
 }
 
@@ -174,6 +190,7 @@ function renderList() {
   ).join('');
   box.querySelectorAll('[data-del]').forEach(btn => btn.addEventListener('click', () => {
     hiddenFunds.delete(btn.getAttribute('data-del'));
+    fundPrices.delete(btn.getAttribute('data-del'));
     funds = funds.filter(f => f.id !== btn.getAttribute('data-del'));
     save();
     renderList();
@@ -212,8 +229,8 @@ document.getElementById('addForm').addEventListener('submit', e => {
     save();
     renderList();
     fetchSeries();
-    // Names arrive in the background; the chart is not blocked on them.
-    lookupNames(added);
+    // Names and prices arrive in the background; the chart is not blocked on them.
+    lookupFundInfo(added);
   }
   const bits = [];
   if (added.length) bits.push(`Added ${added.map(f => f.id).join(', ')}.`);
@@ -223,23 +240,40 @@ document.getElementById('addForm').addEventListener('submit', e => {
   input.focus();
 });
 
-// Look up display names for funds added without one, in the background.
-// The ID is shown until the name arrives; the ID is kept if the lookup
-// fails. Never blocks the chart — fetchSeries runs independently.
-async function lookupNames(list) {
-  for (const f of list) {
-    if (!f || f.name) continue;
-    try {
-      const res = await fetch(`/api/fund-name?id=${encodeURIComponent(f.id)}`);
-      const data = await res.json();
-      if (data && data.name) {
-        f.name = String(data.name).trim();
-        save();
-        renderList();
-        renderTable();
-      }
-    } catch (e) { /* keep the ID */ }
+// Look up fund info (display name + latest price) in the background, in
+// parallel. Fetched for EVERY fund in the list — prices are per-day data,
+// not stable like names. The ID is shown until the name arrives; the ID
+// is kept if the lookup fails, and a failed price lookup leaves that
+// fund's price cells as "—" without breaking the table or the chart.
+// Names are stored on the fund object exactly as before (so they still
+// save to localStorage/Redis); prices live only in fundPrices, never on
+// the fund object. Never blocks the chart — fetchSeries runs independently.
+async function lookupFundInfo(list) {
+  const targets = (list || []).filter(f => f && f.id);
+  if (!targets.length) return;
+  const results = await Promise.allSettled(targets.map(async f => {
+    const res = await fetch(`/api/fund-name?id=${encodeURIComponent(f.id)}`);
+    return { f, data: await res.json() };
+  }));
+  let named = false;
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue;
+    const { f, data } = r.value;
+    if (!data || data.error) continue;
+    if (data.name && !f.name) {
+      f.name = String(data.name).trim();
+      named = true;
+    }
+    if (typeof data.price === 'number') {
+      fundPrices.set(f.id, {
+        price: data.price,
+        currency: typeof data.currency === 'string' ? data.currency.toUpperCase() : '',
+        date: typeof data.date === 'string' ? data.date : '',
+      });
+    }
   }
+  if (named) { save(); renderList(); }
+  renderTable();
 }
 
 // --- periods ---------------------------------------------------------------
@@ -270,6 +304,9 @@ document.getElementById('periodBar').addEventListener('click', e => {
     fetchSeries();
   } else if (e.target.id === 'refreshBtn') {
     fetchSeries();
+    // Prices are per-day data, so Refresh re-fetches them. A period
+    // change does not (the price does not depend on the period).
+    lookupFundInfo(funds);
   }
 });
 
@@ -378,21 +415,29 @@ function renderTable() {
   const body = document.getElementById('returnRows');
   const rows = funds.map((f, i) => {
     const points = series[f.id] || [];
-    return { f, i, points, r: fundReturn(points) };
+    return { f, i, points, r: fundReturn(points), info: fundPrices.get(f.id) || null };
   });
   const dir = tableSort.dir;
   const by = {
     fund: (a, b) => label(a.f).localeCompare(label(b.f)),
     return: (a, b) => a.r - b.r,
-    from: (a, b) => (a.points[0]?.date || '').localeCompare(b.points[0]?.date || ''),
-    to: (a, b) => (a.points[a.points.length - 1]?.date || '').localeCompare(b.points[b.points.length - 1]?.date || ''),
-    points: (a, b) => a.points.length - b.points.length,
+    price: (a, b) => a.info.price - b.info.price,
+    date: (a, b) => (a.info.date || '').localeCompare(b.info.date || ''),
   }[tableSort.key] || (() => 0);
+  // A fund missing the value a column sorts by always sorts last for
+  // that column, whichever direction — the same rule Return already had
+  // for funds with no data.
+  const missing = {
+    fund: () => false,
+    return: (row) => row.r === null,
+    price: (row) => typeof row.info?.price !== 'number',
+    date: (row) => !row.info?.date,
+  }[tableSort.key] || (() => false);
   rows.sort((a, b) => {
-    // Funds with no data always sort last, whichever direction.
-    if (a.r === null && b.r === null) return 0;
-    if (a.r === null) return 1;
-    if (b.r === null) return -1;
+    const am = missing(a), bm = missing(b);
+    if (am && bm) return 0;
+    if (am) return 1;
+    if (bm) return -1;
     return by(a, b) * dir;
   });
   // Arrow on the active column header.
@@ -401,7 +446,7 @@ function renderTable() {
     const base = th.textContent.replace(/ [▲▼]$/, '');
     th.textContent = base + (tableSort.key === key ? (dir === 1 ? ' ▲' : ' ▼') : '');
   });
-  body.innerHTML = rows.map(({ f, i, points, r }) => {
+  body.innerHTML = rows.map(({ f, i, points, r, info }) => {
     const color = COLORS[i % COLORS.length];
     const hidden = hiddenFunds.has(f.id);
     // The tick box is the per-fund show/hide control. The row stays
@@ -409,12 +454,13 @@ function renderTable() {
     const tick = `<td class="show-col"><input type="checkbox" data-show="${esc(f.id)}"${hidden ? '' : ' checked'} aria-label="Show ${esc(label(f))} on the chart"></td>`;
     const rowClass = hidden ? ' class="hidden-fund"' : '';
     const fundCell = `<td><span class="chip-dot" style="background:${color}"></span> ${esc(label(f))} <span class="hint">(${esc(f.id)})</span></td>`;
-    if (r === null) {
-      return `<tr${rowClass}>${tick}${fundCell}<td colspan="4">No data</td></tr>`;
-    }
-    const sign = r > 0 ? '+' : '';
+    // Each cell renders independently: a fund with no history but with a
+    // price (Janus is the live example — empty series, stale price listed)
+    // shows "No data" for Return and still shows its price and date.
+    const sign = r !== null && r > 0 ? '+' : '';
+    const retCell = r === null ? 'No data' : `${sign}${r.toFixed(2)}%`;
     return `<tr${rowClass}>${tick}${fundCell}` +
-      `<td class="price">${sign}${r.toFixed(2)}%</td><td>${esc(points[0].date)}</td><td>${esc(points[points.length - 1].date)}</td><td>${points.length}</td></tr>`;
+      `<td class="price">${retCell}</td><td class="price">${esc(formatPrice(info))}</td><td>${info?.date ? esc(info.date) : '—'}</td></tr>`;
   }).join('');
   // Hiding is a display choice only: it never touches localStorage or
   // Redis, and the set is the single source of truth — re-renders (sort,
@@ -657,14 +703,14 @@ window.addEventListener('resize', drawChart);
     }
     renderList();
     fetchSeries();
-    lookupNames(funds.filter(f => !f.name));
+    lookupFundInfo(funds);
     return;
   }
   renderList();
   fetchSeries();
-  // Pick up names for any fund saved without one (added before name lookup
-  // existed); the ID stays visible until a name arrives.
-  lookupNames(funds.filter(f => !f.name));
+  // Names and latest prices for every fund (prices are per-day data, so
+  // they are fetched on every page load, not only for nameless funds).
+  lookupFundInfo(funds);
   const code = rememberedCode();
   if (!code) return;
   listCode = code;
@@ -673,7 +719,7 @@ window.addEventListener('resize', drawChart);
     applyRemoteCompare(result.funds);
     renderList();
     fetchSeries();
-    lookupNames(funds.filter(f => !f.name));
+    lookupFundInfo(funds);
   } else if (result.notFound) {
     migrateLocalCompare();
   } else {
