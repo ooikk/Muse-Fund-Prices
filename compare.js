@@ -310,6 +310,10 @@ document.getElementById('periodBar').addEventListener('click', e => {
 // (hidden funds don't count), plus any funds with no data. Also used by
 // the show/hide tick boxes, so the line stays true after a tick.
 function setPlotStatus() {
+  if (!funds.length) {
+    setStatus('No funds to compare yet.');
+    return;
+  }
   const empty = funds.filter(f => !series[f.id].length).map(f => label(f));
   const withData = funds.filter(f => series[f.id].length).length;
   const visible = funds.filter(f => !hiddenFunds.has(f.id) && series[f.id].length).length;
@@ -434,6 +438,9 @@ async function fetchSeries() {
   seriesController = null;
   seriesAttemptController = null;
   loading = false;
+  // Funds whose own upstream call failed and have no points: retried
+  // once below, via the incremental path (which retries just them).
+  const failed = [];
   if (result.error) {
     setStatus(result.error);
   } else {
@@ -445,12 +452,26 @@ async function fetchSeries() {
     // fund, so nothing from the old period survives.
     const next = {};
     for (const f of funds) {
-      const pts = result.data.funds?.[f.id]?.points;
-      if (pts) {
+      const entry = result.data.funds?.[f.id];
+      const pts = entry?.points;
+      if (pts && pts.length) {
         // Cache each point's timestamp once. The chart and the tooltip both
         // need it, and re-parsing the date string on every use is what froze
         // the page (see the mousemove handler below).
         next[f.id] = pts.map(p => ({ date: p.date, value: p.value, t: Date.parse(p.date + 'T00:00:00Z') }));
+      } else if (entry && entry.error) {
+        // This fund's own upstream call failed. A failed call must never
+        // wipe a good series another path already merged for this fund;
+        // with no good entry to keep, the fund is retried below.
+        if (series[f.id] && series[f.id].length) {
+          next[f.id] = series[f.id];
+        } else {
+          next[f.id] = [];
+          failed.push({ id: f.id, error: entry.error });
+        }
+      } else if (pts) {
+        // Genuinely empty series (Janus): no data, no error, no retry.
+        next[f.id] = [];
       } else if (series[f.id]) {
         next[f.id] = series[f.id];
       } else {
@@ -472,6 +493,11 @@ async function fetchSeries() {
     stickyListError = null;
     if (stale.controller === controller) setStatus(stale.msg);
   }
+  // Funds whose own call failed and have no points get one incremental
+  // retry pass: fetchNewFunds retries just them (up to 3 attempts) and
+  // never calls fetchSeries, so this cannot loop. A period tap during
+  // that retry discards it via its isStale guard.
+  if (failed.length) fetchNewFunds(failed.map(x => ({ id: x.id })));
 }
 
 // Fetch history for newly added funds only, and merge it into the chart.
@@ -482,49 +508,81 @@ async function fetchSeries() {
 // This path never sets loading and never draws the "Loading…" note, and
 // it has its own AbortController inside the shared helper — a full
 // fetchSeries neither aborts it nor is aborted by it.
+//
+// A fund can fail inside an otherwise-successful proxy response: the
+// proxy fans out one upstream call per fund, and a single fund's call
+// can fail transiently while the rest succeed. Such an entry carries
+// error: '...' — unlike a genuinely empty series (Janus), which has no
+// error key. A failed fund is retried on its own (same 3-attempt, 1s/2s
+// rhythm as the shared helper) before the page gives up on it; a
+// genuinely empty series is never retried.
 async function fetchNewFunds(added) {
-  const ids = (added || []).map(f => f.id).filter(Boolean);
-  if (!ids.length) return;
+  let pending = (added || []).map(f => f.id).filter(Boolean);
+  if (!pending.length) return;
   const { start, end } = periodRange(period);
-  const result = await fetchTimeseriesWithRetry(ids, start, end, {
-    // A period change makes the result stale — the data would be for the
-    // wrong period. Removal is handled per fund at merge time below, so a
-    // fund dropped mid-flight does not cancel the others.
-    isStale: () => {
-      const now = periodRange(period);
-      return now.start !== start || now.end !== end;
-    },
-  });
-  if (result.stopped) return;
-  if (result.error) {
-    // Show the error only if nothing else owns the status line now: a
-    // full load in flight will publish its own status, and a period
-    // change has already moved on.
-    if (!loading) {
-      const now = periodRange(period);
-      if (now.start === start && now.end === end) setStatus(result.error);
+  const errors = new Map(); // id -> last error text reported for that fund
+  for (let round = 1; round <= MAX_ATTEMPTS; round++) {
+    const result = await fetchTimeseriesWithRetry(pending, start, end, {
+      // A period change makes the result stale — the data would be for the
+      // wrong period. Removal is handled per fund at merge time below, so a
+      // fund dropped mid-flight does not cancel the others.
+      isStale: () => {
+        const now = periodRange(period);
+        return now.start !== start || now.end !== end;
+      },
+    });
+    if (result.stopped) return;
+    if (result.error) {
+      // The whole proxy call failed; the shared helper already retried
+      // it 3 times, so there is nothing more to try here.
+      if (!loading) {
+        const now = periodRange(period);
+        if (now.start === start && now.end === end) setStatus(result.error);
+      }
+      return;
     }
-    return;
+    // Merge, but only for funds still listed and only if the period has
+    // not changed since the request started.
+    const now = periodRange(period);
+    if (now.start !== start || now.end !== end) return;
+    const stillFailed = [];
+    let merged = false;
+    for (const id of pending) {
+      if (!funds.some(f => f.id === id)) continue;
+      const entry = result.data.funds?.[id];
+      const pts = entry?.points || [];
+      if (entry && entry.error && !pts.length) {
+        stillFailed.push(id);
+        errors.set(id, entry.error);
+        continue;
+      }
+      series[id] = pts.map(p => ({ date: p.date, value: p.value, t: Date.parse(p.date + 'T00:00:00Z') }));
+      merged = true;
+    }
+    if (!stillFailed.length) {
+      // Everything resolved — data, or genuinely no data.
+      // A full load in flight will render when it completes (its merge
+      // rule preserves these entries); otherwise update the status,
+      // table, and chart now.
+      if (merged && !loading) {
+        setPlotStatus();
+        renderTable();
+        drawChart();
+      }
+      return;
+    }
+    pending = stillFailed;
+    if (round >= MAX_ATTEMPTS) break;
+    await sleep(RETRY_DELAYS[round - 1]);
   }
-  // Merge, but only for funds still listed and only if the period has
-  // not changed since the request started.
-  const now = periodRange(period);
-  if (now.start !== start || now.end !== end) return;
-  let merged = false;
-  for (const id of ids) {
-    if (!funds.some(f => f.id === id)) continue;
-    const pts = result.data.funds?.[id]?.points || [];
-    series[id] = pts.map(p => ({ date: p.date, value: p.value, t: Date.parse(p.date + 'T00:00:00Z') }));
-    merged = true;
-  }
-  if (!merged) return;
-  // A full load in flight will render when it completes (its merge rule
-  // preserves these entries); otherwise update the status, table, and
-  // chart now.
+  // Still failed after all rounds: show the first fund's error once, so
+  // the user sees the reason instead of a silent "No data".
   if (!loading) {
-    setPlotStatus();
-    renderTable();
-    drawChart();
+    const now = periodRange(period);
+    if (now.start === start && now.end === end) {
+      const first = errors.get(pending[0]);
+      if (first) setStatus(first);
+    }
   }
 }
 
@@ -617,15 +675,22 @@ function renderTable() {
     drawChart();
   }));
   // Remove is a delete, not a display choice: drop the fund's hidden
-  // state and price, save the shortened list, and refetch the series.
-  // fetchSeries re-renders the table first, so the row disappears at once.
+  // state, price and series, save the shortened list, and re-render.
+  // No fetch: the other funds' series are already in memory for the
+  // current period, so removing one fund must not re-download the rest
+  // or blank the chart. If a full load is in flight, its merge builds
+  // the next series from the current fund list, so the removed fund
+  // stays gone when that load completes.
   body.querySelectorAll('[data-del]').forEach(btn => btn.addEventListener('click', () => {
     const id = btn.getAttribute('data-del');
     hiddenFunds.delete(id);
     fundPrices.delete(id);
+    delete series[id];
     funds = funds.filter(f => f.id !== id);
     save();
-    fetchSeries();
+    renderTable();
+    drawChart();
+    if (!loading) setPlotStatus();
   }));
 }
 
