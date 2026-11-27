@@ -30,7 +30,12 @@ const COLORS = ['#0b5fff', '#067647', '#b54708', '#b42318', '#6941c6', '#175cd3'
 let funds = load();
 let period = '1Y';
 let series = {}; // id -> [{ date, value }]
-let fetching = false;
+// In-flight series request. A new request (period change, Refresh, fund
+// add/remove) aborts the previous one — the newest request always wins,
+// so a period tap is never silently swallowed while a fetch is in flight.
+let seriesController = null;
+let seriesTimeout = null;
+let loading = false;
 
 function load() {
   try {
@@ -107,6 +112,8 @@ document.getElementById('addForm').addEventListener('submit', e => {
     save();
     renderList();
     fetchSeries();
+    // Names arrive in the background; the chart is not blocked on them.
+    lookupNames(added);
   }
   const bits = [];
   if (added.length) bits.push(`Added ${added.map(f => f.id).join(', ')}.`);
@@ -115,6 +122,25 @@ document.getElementById('addForm').addEventListener('submit', e => {
   input.value = '';
   input.focus();
 });
+
+// Look up display names for funds added without one, in the background.
+// The ID is shown until the name arrives; the ID is kept if the lookup
+// fails. Never blocks the chart — fetchSeries runs independently.
+async function lookupNames(list) {
+  for (const f of list) {
+    if (!f || f.name) continue;
+    try {
+      const res = await fetch(`/api/fund-name?id=${encodeURIComponent(f.id)}`);
+      const data = await res.json();
+      if (data && data.name) {
+        f.name = String(data.name).trim();
+        save();
+        renderList();
+        renderTable();
+      }
+    } catch (e) { /* keep the ID */ }
+  }
+}
 
 // --- periods ---------------------------------------------------------------
 
@@ -153,18 +179,28 @@ async function fetchSeries() {
   renderTable();
   if (!funds.length) {
     series = {};
+    loading = false;
     drawChart();
     setStatus('No funds to compare yet.');
     return;
   }
-  if (fetching) return;
-  fetching = true;
-  setStatus('Loading history…');
+  // Abort any in-flight fetch: the newest request always wins. A period
+  // tap, Refresh, or fund-list edit is never silently ignored.
+  if (seriesController) seriesController.abort();
+  const controller = new AbortController();
+  seriesController = controller;
+  let timedOut = false;
+  clearTimeout(seriesTimeout);
+  seriesTimeout = setTimeout(() => { timedOut = true; controller.abort(); }, 30000);
+  loading = true;
+  setStatus(`Loading ${period} history…`);
+  drawChart();
   const { start, end } = periodRange(period);
   try {
     const ids = funds.map(f => f.id).join(',');
-    const res = await fetch(`/api/timeseries?ids=${encodeURIComponent(ids)}&start=${start}&end=${end}`);
+    const res = await fetch(`/api/timeseries?ids=${encodeURIComponent(ids)}&start=${start}&end=${end}`, { signal: controller.signal });
     const data = await res.json();
+    if (seriesController !== controller) return; // superseded by a newer request
     if (data.error) { setStatus(data.error); return; }
     series = {};
     for (const f of funds) series[f.id] = (data.funds && data.funds[f.id] && data.funds[f.id].points) || [];
@@ -175,11 +211,22 @@ async function fetchSeries() {
         (empty.length ? ` No data from FundSingapore: ${empty.join(', ')}.` : '')
       : `No history returned for ${period}. FundSingapore may not have data for these funds.`);
   } catch (e) {
+    if (e.name === 'AbortError') {
+      // User-aborted (superseded): the newer fetch owns the status.
+      // Timed out: the request hung, so say so instead of spinning.
+      if (timedOut && seriesController === controller) setStatus('Loading timed out after 30 seconds. Try Refresh again.');
+      return;
+    }
+    if (seriesController !== controller) return;
     setStatus('Could not load history (network error). Try Refresh again.');
   } finally {
-    fetching = false;
-    renderTable();
-    drawChart();
+    clearTimeout(seriesTimeout);
+    if (seriesController === controller) {
+      seriesController = null;
+      loading = false;
+      renderTable();
+      drawChart();
+    }
   }
 }
 
@@ -222,6 +269,15 @@ function drawChart() {
   canvas.height = cssH * dpr;
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, cssW, cssH);
+
+  // While a fetch is in flight the chart area says so, instead of showing
+  // stale data as if it were the newly requested period.
+  if (loading) {
+    ctx.fillStyle = '#5b6470';
+    ctx.font = '15px system-ui, sans-serif';
+    ctx.fillText(`Loading ${period} history…`, 16, 40);
+    return;
+  }
 
   const plotted = funds.filter(f => (series[f.id] || []).length >= 2);
   if (!plotted.length) {
@@ -337,3 +393,6 @@ window.addEventListener('resize', drawChart);
 
 renderList();
 fetchSeries();
+// Pick up names for any fund saved without one (added before name lookup
+// existed); the ID stays visible until a name arrives.
+lookupNames(funds.filter(f => !f.name));
