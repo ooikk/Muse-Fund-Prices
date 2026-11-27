@@ -18,9 +18,12 @@
 // Response (HTTP 200):
 //   { funds: { <id>: { points: [{ date, value }], ... } }, ... }
 //     — points is [] when FundSingapore has no series for that fund
-//       (e.g. Janus F00000WJQK, whose price data is also stale there),
-//       and also when that fund's own upstream call fails while others
-//       succeed — the rest of the comparison still plots.
+//       (e.g. Janus F00000WJQK, whose price data is also stale there).
+//     — when that fund's own upstream call fails while others succeed,
+//       the entry is { points: [], error: '<reason>' } instead: the
+//       rest of the comparison still plots, and the caller can tell a
+//       failed call (retry it) from a genuinely empty series (don't).
+//       A fully successful response carries no error keys at all.
 //   { error: '...' } — bad parameters, or the upstream API could not be
 //     reached / returned an error for EVERY fund. Never invents a series.
 //
@@ -139,11 +142,16 @@ export default async function handler(req, res) {
       funds[ids[i]] = { points: result.value };
     } else {
       failures++;
-      if (!firstError) firstError = errorText(result.reason);
-      // A fund whose own call failed behaves exactly like a fund with no
-      // series (Janus): present, with no points, so the page shows
-      // "No data" for it instead of failing the whole comparison.
-      funds[ids[i]] = { points: [] };
+      const text = errorText(result.reason);
+      if (!firstError) firstError = text;
+      // A fund whose own call failed is NOT the same as a fund with no
+      // series (Janus): the entry is marked with the error, so the page
+      // can retry just that fund instead of showing "No data" forever.
+      // A genuinely empty series (fulfilled above, points []) carries
+      // no error key, and a fully successful response has no error keys
+      // at all. A partial response is not cached (see below), so a
+      // cached error marker can never outlive the retry.
+      funds[ids[i]] = { points: [], error: text };
     }
   }
   if (failures === ids.length) {
