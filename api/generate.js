@@ -1,11 +1,16 @@
 // Vercel serverless function: create a shared fund list in Upstash Redis.
-//   POST /api/generate { funds } -> { code } or { error }
+//   POST /api/generate { funds[, compare] } -> { code } or { error }
 // Generates a fresh 16-character lowercase alphanumeric code server-side,
 // stores the funds under Redis key `funds:<code>` (SET NX, so a code is
 // never reused — a collision just retries with a new code), and returns
 // the code. The page then shows the personal link ?u=<code>.
 // A new list starts from whatever list the client sends — for a fresh
 // browser that is the 17 seed funds.
+// When the client also sends a `compare` array (the Compare page's fund
+// list, snapshotted by the main page), it is stored under
+// `compare:<code>` as well. If that second store fails, the code is
+// still returned — the Compare page migrates its local list up on its
+// first visit with the code, so a failed compare store self-heals.
 //
 // Response pattern matches the other proxies: upstream failures come back
 // as HTTP 200 with { error }; only malformed requests get HTTP 400/405.
@@ -16,11 +21,14 @@
 import { randomInt } from 'node:crypto';
 import {
   getRedisConfig,
+  redisSet,
   redisSetNx,
   validateFunds,
+  normalizeCompare,
   readJsonBody,
   rawBodyBytes,
   listKey,
+  compareKey,
   MAX_JSON_BYTES,
 } from '../lib/upstash.js';
 
@@ -47,6 +55,14 @@ export default async function handler(req, res) {
   }
   const fundsError = validateFunds(body.funds);
   if (fundsError) return res.status(400).json({ error: fundsError });
+  // Validate the compare snapshot before claiming a code, so a bad one
+  // cannot fail the request after the funds list is already stored.
+  let compare = null;
+  if (body.compare !== undefined) {
+    const { list, error } = normalizeCompare(body.compare);
+    if (error) return res.status(400).json({ error });
+    compare = list;
+  }
   if (!getRedisConfig()) {
     return res.status(200).json({ error: 'Shared lists are not set up yet (no Upstash Redis configured on the server). Your list is still saved in this browser.' });
   }
@@ -60,7 +76,14 @@ export default async function handler(req, res) {
     } catch (e) {
       return res.status(200).json({ error: 'Could not reach the shared-list store. Try again.' });
     }
-    if (set) return res.status(200).json({ code });
+    if (set) {
+      if (compare !== null) {
+        // Best effort: a failed compare store self-heals — the Compare
+        // page migrates its local list up on first visit with this code.
+        try { await redisSet(compareKey(code), JSON.stringify(compare)); } catch (e) { /* self-heals on migrate */ }
+      }
+      return res.status(200).json({ code });
+    }
     // Collision (key already exists): try a fresh code.
   }
   return res.status(200).json({ error: 'Could not create a list code. Try again.' });
