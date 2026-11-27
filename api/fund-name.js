@@ -61,7 +61,9 @@ export default async function handler(req, res) {
     return res.status(200).json({ error: 'No fund name found for this ID.' });
   }
 
-  // Fund names rarely change; cache a day on the CDN.
-  res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=86400');
+  // Fund names rarely change; cache a day on the Vercel CDN.
+  // (Vercel-CDN-Cache-Control, not plain Cache-Control — Vercel strips
+  // s-maxage from Cache-Control on function responses; see timeseries.js.)
+  res.setHeader('Vercel-CDN-Cache-Control', 's-maxage=86400, stale-while-revalidate=86400');
   return res.status(200).json({ name });
 }
