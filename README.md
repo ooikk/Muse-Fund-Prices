@@ -332,6 +332,24 @@ Stated plainly:
 - The Compare page list is shared under the same code too; localStorage
   stays its local copy, as with the main list.
 
+Deleting a shared list: there is no delete button on the site — delete
+the keys from the Upstash console. Vercel dashboard → Storage →
+`upstash-kv-cerulean-blanket` → REPL, then run:
+
+- `DEL funds:<code>`
+- `DEL compare:<code>` (only if the list has a Compare list)
+
+Each answers `1` when the key existed. Two gotchas: the data browser
+has no per-key delete button in this UI, and the REPL's **Safe Mode**
+toggle (top right, on by default) blocks all write commands — `DEL` is
+refused with `NOPERM` while it is on, so switch it off first; it turns
+itself back on each time the REPL is opened. Deleting the keys removes
+the shared copy only: each browser keeps its own local copy, and a
+browser that still remembers the code will share its list again on the
+next change (the Compare page re-uploads its local list on its next
+visit) — so on every device that used the list, click "Use this browser
+only" on the main page to unlink it.
+
 Setup: the Redis database is `upstash-kv-cerulean-blanket` (Singapore
 region, Free plan: 500,000 commands/month, 250 MB storage, 1 database
 per account), created through Vercel Storage → Upstash. The integration
