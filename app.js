@@ -4,6 +4,32 @@
 // Prices/dates below are the seed values (28-29 Oct 2026) until refreshed.
 const STORAGE_KEY = 'unit-trust-funds-v1';
 
+// Shared lists (Upstash Redis): a list code is 16 lowercase letters/digits.
+// When a code is active, every save also writes through to Redis, so the
+// same list loads on any device from the personal link ?u=<code>.
+// localStorage stays as the local copy and the fallback when Redis is
+// unreachable — a failed Redis save never loses local data.
+const CODE_KEY = 'unit-trust-list-code-v1';
+const CODE_RE = /^[a-z0-9]{16}$/;
+let listCode = null;
+let redisSaveTimer = null;
+
+function rememberCode(code) {
+  try { localStorage.setItem(CODE_KEY, code); } catch (e) { /* storage blocked */ }
+}
+function forgetCode() {
+  try { localStorage.removeItem(CODE_KEY); } catch (e) { /* storage blocked */ }
+}
+function rememberedCode() {
+  try {
+    const code = localStorage.getItem(CODE_KEY);
+    return code && CODE_RE.test(code) ? code : null;
+  } catch (e) { return null; }
+}
+function listLink(code) {
+  return location.origin + location.pathname + '?u=' + code;
+}
+
 const SEED_FUNDS = [
   { name: 'Allianz GIF Allianz Europe Equity Growth Select AT (H2-SGD)', currency: 'SGD', price: '16.576', date: '29-Oct-2026', url: 'https://www.dollardex.com/sgn/?current=investUT/fundOverview&p=icKJECY4BAI7Ybpz4J1AJdkm8cTHpJuJpNSJEcdC+tU=' },
   { name: 'Allianz Global High Payout AM SGD', currency: 'SGD', price: '0.736', date: '28-Oct-2026', url: 'https://www.dollardex.com/SGN/?current=investUT/fundOverview&p=v9bQpI9b1XP7m1LxnTRrC6LTrTRUB9xUYqMQOavhZhc=&previous=investUT/home&nodelevel=child&ID=1271' },
@@ -34,8 +60,117 @@ function load() {
   return SEED_FUNDS.map((f, i) => ({ id: 'seed-' + (i + 1), status: 'seed', ...f }));
 }
 
-function save() {
+function saveLocal() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(funds)); } catch (e) { /* storage full/blocked */ }
+}
+
+// Every change writes the local copy immediately, and — when a shared list
+// is active — writes through to Redis after a short pause (debounced, so
+// "Refresh all" does one write, not one per fund). A failed Redis write
+// only shows a warning; the local copy is already saved.
+function save() {
+  saveLocal();
+  if (listCode) scheduleRedisSave();
+}
+
+function scheduleRedisSave() {
+  clearTimeout(redisSaveTimer);
+  redisSaveTimer = setTimeout(saveToRedis, 500);
+}
+
+async function saveToRedis() {
+  if (!listCode) return;
+  try {
+    const res = await fetch('/api/lists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: listCode, funds }),
+    });
+    const data = await res.json();
+    if (!data || data.error) throw new Error((data && data.error) || 'save failed');
+  } catch (e) {
+    setStatus("Couldn't save to the shared list — your changes are saved in this browser only.");
+  }
+}
+
+// Loads a shared list from Redis. Returns { funds } or { error }; never throws.
+async function loadSharedList(code) {
+  try {
+    const res = await fetch('/api/lists?u=' + encodeURIComponent(code));
+    const data = await res.json();
+    if (data && Array.isArray(data.funds)) return { funds: data.funds };
+    return { error: (data && data.error) || 'Could not load the shared list.' };
+  } catch (e) {
+    return { error: 'Could not reach the shared-list store.' };
+  }
+}
+
+function updateSharedUI() {
+  const hasCode = !!listCode;
+  document.getElementById('noListArea').hidden = hasCode;
+  document.getElementById('myListArea').hidden = !hasCode;
+  if (hasCode) {
+    document.getElementById('listCodeText').textContent = listCode;
+    const link = document.getElementById('listLink');
+    link.textContent = listLink(listCode);
+    link.href = listLink(listCode);
+  }
+}
+
+function setActiveCode(code) {
+  listCode = code;
+  rememberCode(code);
+  updateSharedUI();
+}
+
+function clearActiveCode() {
+  listCode = null;
+  forgetCode();
+  updateSharedUI();
+}
+
+// Starting list, in priority order:
+//   1. ?u=<code> in the address bar — the shared list for that code.
+//   2. A code this browser remembers — its shared list, loaded in the
+//      background while the local copy shows first.
+//   3. Otherwise the local list, exactly as before.
+async function initList() {
+  updateSharedUI();
+  const params = new URLSearchParams(location.search);
+  const urlCode = (params.get('u') || '').trim().toLowerCase();
+  if (urlCode) {
+    if (!CODE_RE.test(urlCode)) {
+      setStatus('That list link has an invalid code — showing your local list instead.');
+      render();
+      return;
+    }
+    setStatus('Loading your shared list…');
+    const result = await loadSharedList(urlCode);
+    if (result.funds) {
+      funds = result.funds;
+      saveLocal();
+      setActiveCode(urlCode);
+      setStatus('Loaded your shared list — changes save to the shared list and this browser.');
+    } else {
+      setStatus('No saved list for that code — showing your local list instead.');
+    }
+    render();
+    return;
+  }
+  render();
+  const code = rememberedCode();
+  if (code) {
+    listCode = code;
+    updateSharedUI();
+    const result = await loadSharedList(code);
+    if (result.funds) {
+      funds = result.funds;
+      saveLocal();
+      render();
+    } else {
+      setStatus("Couldn't reach the shared list — showing the copy saved in this browser.");
+    }
+  }
 }
 
 function setStatus(msg) { document.getElementById('status').textContent = msg || ''; }
@@ -160,10 +295,9 @@ document.getElementById('refreshAll').addEventListener('click', refreshAll);
 // one extra behaviour: a single refresh of all funds, once a day, at the time
 // chosen in the time picker (browser local time, e.g. 09:00).
 // It only runs while this page is open in a browser tab. It cannot refresh
-// prices in the background when the page is closed, because the fund list
-// lives in this browser's localStorage and there is no shared server database
-// to update. A true background refresh would need server storage (e.g. a
-// Vercel KV/Upstash store) and a scheduled server job — see README.md.
+// prices in the background when the page is closed, because there is no
+// scheduled server job — the shared list (Upstash Redis, see "Shared list"
+// above) only stores the list; nothing refreshes it on a schedule.
 const AUTO_KEY = 'unit-trust-auto-refresh-v1';
 let autoTimer = null;
 let autoNextAt = null;
@@ -248,4 +382,73 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   save(); render(); setStatus('Reset to seed funds.');
 });
 
-render();
+// --- Shared list (Upstash Redis) ------------------------------------------
+// "Create my list" stores the current funds under a fresh random code and
+// gives this list a personal link (?u=<code>). Opening that link on any
+// device loads the same list; every change after that saves to Redis and
+// to this browser. The link is the key — anyone with it can open and edit
+// the list — and if it is lost, the list is lost unless a browser still
+// remembers the code. Two devices editing at once: last write wins.
+
+document.getElementById('createListBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('createListBtn');
+  btn.disabled = true;
+  setStatus('Creating your shared list…');
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ funds }),
+    });
+    const data = await res.json();
+    if (!data || !data.code) throw new Error((data && data.error) || 'Could not create a shared list.');
+    setActiveCode(data.code);
+    history.replaceState(null, '', '?u=' + data.code);
+    setStatus('Your shared list is ready — open the link on any device to load this list.');
+  } catch (e) {
+    setStatus("Couldn't create a shared list: " + e.message + ' Nothing changed — your list is still saved in this browser.');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('copyLinkBtn').addEventListener('click', async () => {
+  if (!listCode) return;
+  const link = listLink(listCode);
+  try {
+    await navigator.clipboard.writeText(link);
+    setStatus('Personal link copied.');
+  } catch (e) {
+    setStatus("Copy didn't work in this browser — long-press the link to copy it: " + link);
+  }
+});
+
+document.getElementById('localOnlyBtn').addEventListener('click', () => {
+  clearActiveCode();
+  history.replaceState(null, '', location.pathname);
+  setStatus('This browser is now using its own local list only. The shared copy is still saved under its code — open its link to use it again.');
+});
+
+document.getElementById('openListForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('openCode');
+  const code = input.value.trim().toLowerCase();
+  if (!CODE_RE.test(code)) {
+    setStatus("That code doesn't look right — a list code is 16 lowercase letters and digits.");
+    return;
+  }
+  setStatus('Loading that shared list…');
+  const result = await loadSharedList(code);
+  if (result.funds) {
+    funds = result.funds;
+    setActiveCode(code);
+    history.replaceState(null, '', '?u=' + code);
+    saveLocal();
+    render();
+    setStatus('Loaded your shared list — changes save to the shared list and this browser.');
+  } else {
+    setStatus('No saved list for that code — your current list is unchanged.');
+  }
+});
+
+initList();
