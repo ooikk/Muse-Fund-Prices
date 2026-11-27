@@ -280,8 +280,9 @@ Limitations, stated plainly:
 
 - It only runs while the page is open in a tab. Closing the tab, the
   browser, or the device stops it — the fund list lives in the browser's
-  localStorage, not on a server, so there is nothing for a background job
-  to update. If the page is not open at the chosen time, that day's run
+  localStorage (or in the shared Redis list, if one is active — see
+  "Shared fund lists" below), not in a scheduled server job, so there is
+  nothing for a background job to update. If the page is not open at the chosen time, that day's run
   is skipped and the next run is the following day.
 - Blocked funds (DollarDex bot detection) keep their last price on each
   auto-refresh, exactly as a manual refresh does; they are not silently
@@ -294,6 +295,50 @@ This is not the same as the GAS daily refresh above: the website option
 refreshes the copy in one browser, while GAS refreshes the shared Sheet.
 Use GAS for the Sheet, and the website option only if you leave the page
 open.
+
+## Shared fund lists (Upstash Redis)
+
+By default the fund list lives only in one browser's localStorage. "Create
+my list" (in the "Shared list" card) turns it into a shared list that
+loads on any device:
+
+- Clicking it stores the current list — for a fresh browser that is the
+  17 seed funds — in Upstash Redis under a fresh random 16-character
+  code (lowercase letters and digits), and shows a personal link of the
+  form `https://muse-fund-prices.vercel.app/?u=<code>`.
+- Opening that link on any device loads the same list. The browser
+  remembers the code, so the link is only needed the first time; the
+  "Open a list by code" box does the same thing from a typed code.
+  "Use this browser only" stops this browser using the shared list (the
+  Redis copy stays saved under its code).
+- Every change (add, delete, refresh, edit, import, reset) saves to
+  Redis a moment later (debounced) and to this browser immediately.
+  If Redis cannot be reached, the change is still saved locally and the
+  page says so — a failed shared save never loses local data.
+
+Stated plainly:
+
+- The link is the key: anyone with the link or the code can open and
+  edit the list. There is no password. Keep it private.
+- Lose the link and the list is lost, unless a browser still remembers
+  the code.
+- Two devices editing at once: last write wins. There is no merging.
+- The Compare page list is separate and still lives in localStorage.
+
+Setup: the Redis database is `upstash-kv-cerulean-blanket` (Singapore
+region, Free plan: 500,000 commands/month, 250 MB storage, 1 database
+per account), created through Vercel Storage → Upstash. The integration
+sets these env vars on the project (Production and Preview):
+
+- `UPSTASH_REDIS_KV_REST_API_URL`
+- `UPSTASH_REDIS_KV_REST_API_TOKEN`
+
+The serverless functions (`api/lists.js`, `api/generate.js`, via
+`lib/upstash.js`) read those names, falling back to
+`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` if the `_KV_`
+names are absent. The token never reaches the browser — only the
+serverless functions read it. If Redis is not configured, the page shows
+a plain error and behaves exactly as before (local list only).
 
 ## Supported sites
 
@@ -408,6 +453,9 @@ prices are indicative and usually lag 2–4 dealing days on DollarDex.
 ```bash
 # Syntax-check the crawler and parsers:
 node --check api/refresh.js
+node --check api/lists.js
+node --check api/generate.js
+node --check lib/upstash.js
 node --check lib/parsers/index.js
 node --check lib/parsers/dollardex.js
 node --check app.js
@@ -423,8 +471,11 @@ python3 -m http.server 8000
 | --- | --- |
 | `index.html` | Page structure and add-fund form |
 | `styles.css` | Styling |
-| `app.js` | Fund list, add/delete/refresh UI, localStorage, seed data, daily auto-refresh |
+| `app.js` | Fund list, add/delete/refresh UI, localStorage, seed data, daily auto-refresh, shared lists (Upstash Redis) |
 | `api/refresh.js` | Vercel serverless handler: fetch, bot-check, domain-routed parsing |
+| `api/lists.js` | Vercel serverless handler: load/save a shared fund list in Upstash Redis by code |
+| `api/generate.js` | Vercel serverless handler: create a shared fund list under a fresh random code |
+| `lib/upstash.js` | Shared Upstash REST client + code/funds validation for the list endpoints |
 | `api/timeseries.js` | Vercel serverless handler: FundSingapore history proxy for the Compare page |
 | `compare.html` | Compare page: fund list, period buttons, chart, returns table |
 | `compare.js` | Compare page logic: fund list in localStorage, period ranges, canvas chart |
