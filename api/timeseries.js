@@ -159,7 +159,15 @@ export default async function handler(req, res) {
     return res.status(200).json({ error: firstError });
   }
   // A fixed start/end only changes when a new trading day arrives, so a
-  // successful response is safe to cache for an hour on the Vercel CDN.
+  // successful response is safe to cache on the Vercel CDN — but only
+  // for 15 minutes (s-maxage=900). A one-hour lifetime once kept a fund
+  // at "No data": a response cached while FundSingapore briefly returned
+  // an empty series for that fund stayed on the Singapore edge, and
+  // Refresh or a newly opened page could not dislodge it because the URL
+  // was unchanged (fund 0P0000KV3F, 27 Nov 2026). Fifteen minutes bounds
+  // that failure mode while the cache still helps repeat loads within a
+  // session. The page also carries its own cache-busting v= param
+  // (compare.js TIMESERIES_CACHE_VERSION) for a fresh key when needed.
   // NOTE: plain Cache-Control s-maxage does NOT work here — Vercel strips
   // s-maxage from Cache-Control on function responses and substitutes its
   // "public, max-age=0, must-revalidate" default (verified live 27 Nov
@@ -168,9 +176,9 @@ export default async function handler(req, res) {
   // Error responses above set no cache header and are never cached.
   // A PARTIAL response (one fund failed) is not cached either: the
   // failure may be transient, and a cached [] would keep that fund at
-  // "No data" for an hour even though a retry would fetch it.
+  // "No data" until the entry expires even though a retry would fetch it.
   if (failures === 0) {
-    res.setHeader('Vercel-CDN-Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    res.setHeader('Vercel-CDN-Cache-Control', 's-maxage=900, stale-while-revalidate=86400');
   }
   return res.status(200).json({ funds });
 }
