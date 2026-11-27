@@ -315,6 +315,11 @@ works for any of these sites. A link from any other site returns
 
 The **Compare funds** button on the main page opens a chart that plots several funds' performance over a period (1M, 3M, 6M, 1Y, 3Y, 5Y, YTD), each line rebased to 100 at the start of the period. History comes from FundSingapore's own timeseries API through the same-origin `/api/timeseries` proxy (`api/timeseries.js`) — a plain GET, no login or key. Add funds by FundSingapore fund ID, several at once separated by commas, or paste a FundSingapore fund link and the ID is taken from it; each listed fund has a Remove button, and the list is kept in this browser's localStorage. Two things to know: each fund's line is in its own currency (no currency conversion), and a fund FundSingapore has stopped updating has no history — Janus (F00000WJQK) currently returns an empty series and shows as "No data". FundSingapore's API is undocumented, so it could change without notice; if it does, the page shows an error instead of a wrong chart.
 
+Tuning the Compare page (edit, push to `main`, Vercel redeploys in about a minute):
+
+- **Maximum number of funds:** `api/timeseries.js`, `MAX_IDS` (currently 20). The page itself has no limit — the chart colours just cycle past 10 funds.
+- **Timeouts:** `api/timeseries.js`, `AbortSignal.timeout(20000)` — 20 seconds for the server's fetch from FundSingapore; and `compare.js`, the 30-second `setTimeout` that aborts a hung request in the browser. The server timeout must stay below the browser one, or the page gives up before the server answers — raise both together if needed. An 11-fund cold-start call took 18 seconds, so a much higher fund limit will likely need longer timeouts too.
+
 ### Finding a Fidelity fund's link
 
 To track a Fidelity fund, find its ISIN on the Fidelity Singapore fund
