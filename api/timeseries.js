@@ -94,8 +94,13 @@ export default async function handler(req, res) {
     funds[id] = { points };
   }
   // A fixed start/end only changes when a new trading day arrives, so a
-  // successful response is safe to cache for an hour (Vercel CDN). Error
-  // responses above set no cache header and are never cached.
-  res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+  // successful response is safe to cache for an hour on the Vercel CDN.
+  // NOTE: plain Cache-Control s-maxage does NOT work here — Vercel strips
+  // s-maxage from Cache-Control on function responses and substitutes its
+  // "public, max-age=0, must-revalidate" default (verified live 27 Nov
+  // 2026: MISS, Age 0). Vercel-CDN-Cache-Control is the header the CDN
+  // actually honours; it is consumed by the CDN, not sent to the browser.
+  // Error responses above set no cache header and are never cached.
+  res.setHeader('Vercel-CDN-Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
   return res.status(200).json({ funds });
 }
