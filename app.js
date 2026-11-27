@@ -10,9 +10,28 @@ const STORAGE_KEY = 'unit-trust-funds-v1';
 // localStorage stays as the local copy and the fallback when Redis is
 // unreachable — a failed Redis save never loses local data.
 const CODE_KEY = 'unit-trust-list-code-v1';
+const COMPARE_STORAGE_KEY = 'unit-trust-compare-funds-v1';
 const CODE_RE = /^[a-z0-9]{16}$/;
 let listCode = null;
 let redisSaveTimer = null;
+
+// Snapshot of the Compare page's fund list, for "Create my list": the
+// compare list travels with the main list under the same code. Returns
+// null when this browser has no compare list (or it cannot be read) —
+// creating the funds list must never fail because of the snapshot.
+function compareSnapshot() {
+  try {
+    const raw = localStorage.getItem(COMPARE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.length) return null;
+    const entries = parsed
+      .filter(f => f && typeof f.id === 'string' && /^[A-Za-z0-9]+$/.test(f.id.trim()))
+      .slice(0, 20)
+      .map(f => ({ id: f.id.trim().toUpperCase(), name: typeof f.name === 'string' ? f.name : '' }));
+    return entries.length ? entries : null;
+  } catch (e) { return null; }
+}
 
 function rememberCode(code) {
   try { localStorage.setItem(CODE_KEY, code); } catch (e) { /* storage blocked */ }
@@ -395,10 +414,13 @@ document.getElementById('createListBtn').addEventListener('click', async () => {
   btn.disabled = true;
   setStatus('Creating your shared list…');
   try {
+    const body = { funds };
+    const compare = compareSnapshot();
+    if (compare) body.compare = compare;
     const res = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ funds }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (!data || !data.code) throw new Error((data && data.error) || 'Could not create a shared list.');
