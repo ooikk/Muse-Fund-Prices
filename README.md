@@ -388,7 +388,7 @@ The **Compare funds** button on the main page opens a chart that plots several f
 Tuning the Compare page (edit, push to `main`, Vercel redeploys in about a minute):
 
 - **Maximum number of funds:** `api/timeseries.js`, `MAX_IDS` (currently 20). The page itself has no limit — the chart colours just cycle past 10 funds.
-- **Timeouts:** `api/timeseries.js`, `AbortSignal.timeout(20000)` — 20 seconds for the server's fetch from FundSingapore; and `compare.js`, the 30-second `setTimeout` that aborts a hung request in the browser. The server timeout must stay below the browser one, or the page gives up before the server answers — raise both together if needed. An 11-fund cold-start call took 18 seconds, so a much higher fund limit will likely need longer timeouts too.
+- **Timeouts:** `api/timeseries.js`, `AbortSignal.timeout(25000)` — 25 seconds for the server's fetch from FundSingapore; and `compare.js`, the 30-second `setTimeout` that aborts a hung request in the browser. The server timeout must stay below the browser one, or the page gives up before the server answers — raise both together if needed. A 5-fund cold-start call took ~11 seconds and an 11-fund cold-start call 18 seconds, so a much higher fund limit will likely need longer timeouts too. The page retries a failed series load automatically (up to 3 attempts) before showing an error.
 
 ### Finding a Fidelity fund's link
 
