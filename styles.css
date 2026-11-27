@@ -20,6 +20,10 @@ button:disabled { opacity:.55; cursor:wait; }
 #addForm label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); flex:1 1 220px; }
 #addForm label.wide { flex: 2 1 360px; }
 #addForm input, #addForm select { color:var(--text); font-size:15px; }
+#openListForm { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-top:12px; }
+#openListForm label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); flex:1 1 220px; }
+#openListForm input { color:var(--text); font-size:15px; }
+.share-link { word-break: break-all; }
 .hint { color:var(--muted); font-size:13px; }
 .hint code { word-break: break-all; }
 .table-wrap { overflow-x:auto; }
