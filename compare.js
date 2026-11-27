@@ -523,6 +523,43 @@ function drawChart() {
     ctx.setLineDash([]);
   }
 
+  // Vertical gridlines on the x axis. The scale follows the plotted range
+  // (t1 - t0), not the period button, so YTD behaves correctly in any
+  // month: 3 months or less -> thin at each Monday, thick at each month
+  // start; longer -> thin at each month start, thick at each year start
+  // (1 January). A boundary that is both (a Monday that is the 1st, or
+  // 1 January) draws once, thick. All dates UTC, matching the data
+  // timestamps and the x labels. Cheap: at most ~60 lines on 5Y.
+  const DAY_MS = 86400000;
+  const shortRange = (t1 - t0) <= 92 * DAY_MS;
+  const thinX = [], thickX = [];
+  // Month starts in range.
+  let m = new Date(Date.UTC(new Date(t0).getUTCFullYear(), new Date(t0).getUTCMonth(), 1));
+  if (m.getTime() < t0) m = new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 1));
+  while (m.getTime() <= t1) {
+    if (shortRange || m.getUTCMonth() === 0) thickX.push(X(m.getTime()));
+    else thinX.push(X(m.getTime()));
+    m = new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 1));
+  }
+  if (shortRange) {
+    // Mondays in range; a Monday that is the 1st is already a thick
+    // month-start line, so it is skipped here.
+    let w = new Date(t0);
+    w = new Date(Date.UTC(w.getUTCFullYear(), w.getUTCMonth(), w.getUTCDate() + ((8 - w.getUTCDay()) % 7)));
+    while (w.getTime() <= t1) {
+      if (w.getUTCDate() !== 1) thinX.push(X(w.getTime()));
+      w = new Date(w.getTime() + 7 * DAY_MS);
+    }
+  }
+  for (const x of thinX) {
+    ctx.strokeStyle = '#e6e9ed'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + H); ctx.stroke();
+  }
+  for (const x of thickX) {
+    ctx.strokeStyle = '#98a2b3'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + H); ctx.stroke();
+  }
+
   // One line per visible fund. The colour follows the fund's position in
   // the fund list (the same index the table uses), so hiding one fund
   // never recolors the others.
