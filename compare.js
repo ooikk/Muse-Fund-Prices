@@ -246,11 +246,42 @@ function fundReturn(points) {
   return (last / first - 1) * 100;
 }
 
+// --- returns table (sortable) ------------------------------------------------
+
+// Click a column header to sort by it; clicking again reverses the order.
+// Default: best return first, matching the hover tooltip. The colour dot
+// stays with its fund when rows are reordered, so the table still works
+// as the chart legend.
+let tableSort = { key: 'return', dir: -1 };
+
 function renderTable() {
   const body = document.getElementById('returnRows');
-  body.innerHTML = funds.map((f, i) => {
+  const rows = funds.map((f, i) => {
     const points = series[f.id] || [];
-    const r = fundReturn(points);
+    return { f, i, points, r: fundReturn(points) };
+  });
+  const dir = tableSort.dir;
+  const by = {
+    fund: (a, b) => label(a.f).localeCompare(label(b.f)),
+    return: (a, b) => a.r - b.r,
+    from: (a, b) => (a.points[0]?.date || '').localeCompare(b.points[0]?.date || ''),
+    to: (a, b) => (a.points[a.points.length - 1]?.date || '').localeCompare(b.points[b.points.length - 1]?.date || ''),
+    points: (a, b) => a.points.length - b.points.length,
+  }[tableSort.key] || (() => 0);
+  rows.sort((a, b) => {
+    // Funds with no data always sort last, whichever direction.
+    if (a.r === null && b.r === null) return 0;
+    if (a.r === null) return 1;
+    if (b.r === null) return -1;
+    return by(a, b) * dir;
+  });
+  // Arrow on the active column header.
+  document.querySelectorAll('thead th[data-sort]').forEach(th => {
+    const key = th.getAttribute('data-sort');
+    const base = th.textContent.replace(/ [▲▼]$/, '');
+    th.textContent = base + (tableSort.key === key ? (dir === 1 ? ' ▲' : ' ▼') : '');
+  });
+  body.innerHTML = rows.map(({ f, i, points, r }) => {
     const color = COLORS[i % COLORS.length];
     if (r === null) {
       return `<tr><td><span class="chip-dot" style="background:${color}"></span> ${esc(label(f))} <span class="hint">(${esc(f.id)})</span></td><td colspan="4">No data</td></tr>`;
@@ -260,6 +291,16 @@ function renderTable() {
       `<td class="price">${sign}${r.toFixed(2)}%</td><td>${esc(points[0].date)}</td><td>${esc(points[points.length - 1].date)}</td><td>${points.length}</td></tr>`;
   }).join('');
 }
+
+document.querySelectorAll('thead th[data-sort]').forEach(th => {
+  th.style.cursor = 'pointer';
+  th.addEventListener('click', () => {
+    const key = th.getAttribute('data-sort');
+    if (tableSort.key === key) tableSort.dir *= -1;
+    else tableSort = { key, dir: key === 'fund' ? 1 : -1 };
+    renderTable();
+  });
+});
 
 // --- chart (vanilla canvas, no dependency) -------------------------------------
 
