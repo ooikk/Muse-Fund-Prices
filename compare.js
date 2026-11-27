@@ -203,7 +203,13 @@ async function fetchSeries() {
     if (seriesController !== controller) return; // superseded by a newer request
     if (data.error) { setStatus(data.error); return; }
     series = {};
-    for (const f of funds) series[f.id] = (data.funds && data.funds[f.id] && data.funds[f.id].points) || [];
+    for (const f of funds) {
+      // Cache each point's timestamp once. The chart and the tooltip both
+      // need it, and re-parsing the date string on every use is what froze
+      // the page (see the mousemove handler below).
+      series[f.id] = ((data.funds && data.funds[f.id] && data.funds[f.id].points) || [])
+        .map(p => ({ date: p.date, value: p.value, t: Date.parse(p.date + 'T00:00:00Z') }));
+    }
     const empty = funds.filter(f => !series[f.id].length).map(f => label(f));
     const withData = funds.filter(f => series[f.id].length).length;
     setStatus(withData
@@ -260,6 +266,10 @@ function renderTable() {
 const canvas = document.getElementById('chart');
 const tip = document.getElementById('chartTip');
 
+// X-axis mapping from the last drawChart run, reused by the tooltip so it
+// never has to re-scan the data. See the mousemove handler.
+let chartGeom = null;
+
 function drawChart() {
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
@@ -294,8 +304,7 @@ function drawChart() {
   for (const f of plotted) {
     for (const p of series[f.id]) {
       min = Math.min(min, p.value); max = Math.max(max, p.value);
-      const t = Date.parse(p.date + 'T00:00:00Z');
-      t0 = Math.min(t0, t); t1 = Math.max(t1, t);
+      t0 = Math.min(t0, p.t); t1 = Math.max(t1, p.t);
     }
   }
   if (max - min < 1) { max = min + 1; }
@@ -305,6 +314,9 @@ function drawChart() {
 
   const X = t => padL + ((t - t0) / (t1 - t0)) * W;
   const Y = v => padT + (1 - (v - min) / (max - min)) * H;
+
+  // Remember the x mapping for the tooltip (see the mousemove handler).
+  chartGeom = { t0, t1, padL, W };
 
   // Gridlines and y labels.
   ctx.strokeStyle = '#e6e9ed'; ctx.fillStyle = '#5b6470';
@@ -335,7 +347,7 @@ function drawChart() {
     ctx.lineWidth = 2;
     ctx.beginPath();
     series[f.id].forEach((p, j) => {
-      const x = X(Date.parse(p.date + 'T00:00:00Z')), y = Y(p.value);
+      const x = X(p.t), y = Y(p.value);
       if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
@@ -348,14 +360,19 @@ canvas.addEventListener('mousemove', e => {
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   const plotted = funds.filter(f => (series[f.id] || []).length >= 2);
-  if (!plotted.length) { tip.hidden = true; return; }
-  // Find the data point nearest the cursor's x position.
+  if (!plotted.length || loading || !chartGeom) { tip.hidden = true; return; }
+  // One pass over the points, using the cached timestamps and the x
+  // mapping drawChart already computed. The old code called chartX() for
+  // every point, and chartX re-scanned every point each time — O(N^2):
+  // 16 seconds for a single mouse move on 5Y data, which is what froze
+  // the page with a "Page Unresponsive" popup. This version takes ~5ms.
+  const { t0, t1, padL, W } = chartGeom;
+  const X = t => padL + ((t - t0) / (t1 - t0)) * W;
   let best = null, bestDx = Infinity;
   for (const f of plotted) {
     for (const p of series[f.id]) {
-      const t = Date.parse(p.date + 'T00:00:00Z');
-      const dx = Math.abs(mx - chartX(t));
-      if (dx < bestDx) { bestDx = dx; best = { date: p.date }; }
+      const dx = Math.abs(mx - X(p.t));
+      if (dx < bestDx) { bestDx = dx; best = p; }
     }
   }
   if (!best || bestDx > 40) { tip.hidden = true; return; }
@@ -363,7 +380,7 @@ canvas.addEventListener('mousemove', e => {
     const pts = series[f.id];
     let nearest = pts[0];
     for (const p of pts) {
-      if (Math.abs(Date.parse(p.date) - Date.parse(best.date)) < Math.abs(Date.parse(nearest.date) - Date.parse(best.date))) nearest = p;
+      if (Math.abs(p.t - best.t) < Math.abs(nearest.t - best.t)) nearest = p;
     }
     return `<span style="color:${COLORS[i % COLORS.length]}">●</span> ${esc(label(f))}: ${nearest.value.toFixed(2)}`;
   }).join('<br>');
@@ -373,19 +390,6 @@ canvas.addEventListener('mousemove', e => {
   tip.style.top = (e.clientY - rect.top + 12) + 'px';
 });
 canvas.addEventListener('mouseleave', () => { tip.hidden = true; });
-
-function chartX(t) {
-  // Same x mapping as drawChart, recomputed from current data.
-  const plotted = funds.filter(f => (series[f.id] || []).length >= 2);
-  let t0 = Infinity, t1 = -Infinity;
-  for (const f of plotted) for (const p of series[f.id]) {
-    const d = Date.parse(p.date + 'T00:00:00Z');
-    t0 = Math.min(t0, d); t1 = Math.max(t1, d);
-  }
-  if (t1 - t0 < 86400000) t1 = t0 + 86400000;
-  const cssW = canvas.clientWidth || 1000;
-  return 56 + ((t - t0) / (t1 - t0)) * (cssW - 56 - 16);
-}
 
 window.addEventListener('resize', drawChart);
 
