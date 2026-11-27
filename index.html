@@ -51,6 +51,27 @@
   </section>
 
   <section class="card">
+    <h2>Shared list</h2>
+    <p class="hint">Use one list on every device: create a personal link for this fund list. The list is saved under a random code — anyone with the link can open and edit it, so keep it private. If you lose the link, the list is lost, unless this browser still remembers it.</p>
+    <div id="noListArea">
+      <button id="createListBtn" class="primary">Create my list</button>
+    </div>
+    <div id="myListArea" hidden>
+      <p>Your list code: <code id="listCodeText"></code></p>
+      <p class="share-link">Personal link: <a id="listLink" href="#"></a>
+        <button id="copyLinkBtn" class="small">Copy link</button>
+      </p>
+      <button id="localOnlyBtn" class="small danger-outline">Use this browser only</button>
+    </div>
+    <form id="openListForm">
+      <label>Open a list by code
+        <input id="openCode" type="text" inputmode="latin" maxlength="16" placeholder="16 lowercase letters and digits">
+      </label>
+      <button type="submit" class="small">Open list</button>
+    </form>
+  </section>
+
+  <section class="card">
     <h2>Funds <span id="count"></span></h2>
     <div class="table-wrap">
       <table>
@@ -65,7 +86,7 @@
 </main>
 
 <footer>
-  <p>Your fund list is stored in this browser (localStorage) on this device. Use Export JSON to back it up or move it to another device. The serverless crawler (<code>/api/refresh</code>) only fetches the fund page you ask for; it stores nothing.</p>
+  <p>Your fund list is stored in this browser (localStorage) on this device. Create a shared list above to use the same list on any device — the list is saved in Upstash Redis under a personal code. Use Export JSON to back it up. The serverless crawler (<code>/api/refresh</code>) only fetches the fund page you ask for; it stores nothing.</p>
 </footer>
 
 <script src="app.js"></script>
