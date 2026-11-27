@@ -26,7 +26,10 @@ const API_BASE = 'https://fundsingapore-api.newwealth.cloud/api/v2/funds/imas_fu
 
 const ID_RE = /^[A-Za-z0-9]+$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const MAX_IDS = 10;
+// 20 funds: the page allows a whole comparison list in one request; there
+// is no upstream limit at 10 (or 20) — the cap is only a guard against
+// absurd requests.
+const MAX_IDS = 20;
 
 export default async function handler(req, res) {
   const idsParam = String(req.query?.ids || '');
@@ -90,5 +93,9 @@ export default async function handler(req, res) {
     }
     funds[id] = { points };
   }
+  // A fixed start/end only changes when a new trading day arrives, so a
+  // successful response is safe to cache for an hour (Vercel CDN). Error
+  // responses above set no cache header and are never cached.
+  res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
   return res.status(200).json({ funds });
 }
