@@ -96,7 +96,6 @@ let seriesController = null;
 // so the retry gets a fresh controller (an aborted controller stays
 // aborted forever and would fail every retry at once).
 let seriesAttemptController = null;
-let seriesTimeout = null;
 let loading = false;
 
 function load() {
@@ -220,7 +219,12 @@ document.getElementById('addForm').addEventListener('submit', e => {
   if (added.length) {
     funds = funds.concat(added);
     save();
-    fetchSeries();
+    // The new row appears at once (fetchSeries used to do this re-render;
+    // the incremental fetch below never touches the table until data lands).
+    renderTable();
+    // History for the new funds only — the existing lines stay put instead
+    // of re-downloading every fund and blanking the chart.
+    fetchNewFunds(added);
     // Names and prices arrive in the background; the chart is not blocked on them.
     lookupFundInfo(added);
   }
@@ -329,6 +333,69 @@ function setPlotStatus() {
 // out silently instead of firing a stale retry.
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// How many times a series load is tried, and the pauses between tries.
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAYS = [1000, 2000]; // pause before attempt 2, before attempt 3
+
+// Fetch one timeseries request for the given ids over [start, end],
+// retrying failed attempts automatically (up to 3 attempts, 1s then 2s
+// pauses). One request usually succeeds, but a cold start (CDN MISS,
+// first load of the day) takes ~8–11s and the upstream can be slower or
+// fail outright — and the page used to show an error and stop, leaving
+// the user to press Refresh. So a failed load retries instead.
+//   opts.isStale() — true when the caller no longer wants the result
+//     (superseded, period changed); checked before each attempt and
+//     after each failure, so a stale retry never fires.
+//   opts.onAttempt(c) / opts.onAttemptEnd(c) — each attempt gets its own
+//     AbortController, so a timeout abort ends that attempt only (an
+//     aborted controller stays aborted forever and would fail every
+//     retry at once). The caller may keep the in-flight controller to
+//     abort it from outside.
+//   opts.onRetry(n) — called before retry attempt n, so the caller can
+//     narrate it (full loads do; incremental loads stay silent).
+// Returns { data } on success, { error } (the message to show) when
+// every attempt failed, or { stopped: true } when isStale() said stop.
+// Never throws.
+async function fetchTimeseriesWithRetry(ids, start, end, opts = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (opts.isStale && opts.isStale()) return { stopped: true };
+    let timedOut = false;
+    const attemptController = new AbortController();
+    if (opts.onAttempt) opts.onAttempt(attemptController);
+    const timer = setTimeout(() => { timedOut = true; attemptController.abort(); }, 30000);
+    try {
+      const res = await fetch(`/api/timeseries?ids=${encodeURIComponent(ids.join(','))}&start=${start}&end=${end}`, { signal: attemptController.signal });
+      const data = await res.json();
+      if (opts.isStale && opts.isStale()) return { stopped: true };
+      if (data.error) { lastError = data.error; }
+      else { return { data }; }
+    } catch (e) {
+      // An abort with isStale() true means this request was superseded:
+      // the newer request owns the status line, so stay silent.
+      if (opts.isStale && opts.isStale()) return { stopped: true };
+      // Anything else is a failure worth retrying. An AbortError here can
+      // only be this attempt's own 30s timer — an outside abort always
+      // comes with isStale() turning true first.
+      if (e.name === 'AbortError') {
+        lastError = timedOut
+          ? 'Loading timed out after 30 seconds. Try Refresh again.'
+          : 'Loading was interrupted. Try Refresh again.';
+      } else {
+        lastError = 'Could not load history (network error). Try Refresh again.';
+      }
+    } finally {
+      clearTimeout(timer);
+      if (opts.onAttemptEnd) opts.onAttemptEnd(attemptController);
+    }
+    if (attempt >= MAX_ATTEMPTS) break; // out of retries
+    if (opts.isStale && opts.isStale()) return { stopped: true }; // superseded while failing
+    if (opts.onRetry) opts.onRetry(attempt + 1);
+    await sleep(RETRY_DELAYS[attempt - 1]);
+  }
+  return { error: lastError };
+}
+
 async function fetchSeries() {
   renderTable();
   if (!funds.length) {
@@ -354,77 +421,45 @@ async function fetchSeries() {
   drawChart();
   const { start, end } = periodRange(period);
   lastRange = { start, end };
-  // One request usually succeeds, but a cold start (CDN MISS, first load
-  // of the day) takes ~8–11s and the upstream can be slower or fail
-  // outright — and the page used to show an error and stop, leaving the
-  // user to press Refresh. So retry automatically, up to 3 attempts
-  // total, with a growing pause between attempts. A retry never fights
-  // the user's own actions: a new fetchSeries replaces the request
-  // token, and every step below checks that this token is still current
-  // before touching the status line, the chart, or firing again. Each
-  // attempt gets its own AbortController, so a timeout abort ends that
-  // attempt only — the retry starts fresh.
-  const MAX_ATTEMPTS = 3;
-  const RETRY_DELAYS = [1000, 2000]; // pause before attempt 2, before attempt 3
-  let lastError = null; // message to show if every attempt fails
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    if (seriesController !== controller) return; // superseded while waiting
-    let timedOut = false;
-    const attemptController = new AbortController();
-    seriesAttemptController = attemptController;
-    clearTimeout(seriesTimeout);
-    seriesTimeout = setTimeout(() => { timedOut = true; attemptController.abort(); }, 30000);
-    try {
-      const ids = funds.map(f => f.id).join(',');
-      const res = await fetch(`/api/timeseries?ids=${encodeURIComponent(ids)}&start=${start}&end=${end}`, { signal: attemptController.signal });
-      const data = await res.json();
-      if (seriesController !== controller) return; // superseded by a newer request
-      if (data.error) { lastError = data.error; }
-      else {
-        series = {};
-        for (const f of funds) {
-          // Cache each point's timestamp once. The chart and the tooltip both
-          // need it, and re-parsing the date string on every use is what froze
-          // the page (see the mousemove handler below).
-          series[f.id] = ((data.funds && data.funds[f.id] && data.funds[f.id].points) || [])
-            .map(p => ({ date: p.date, value: p.value, t: Date.parse(p.date + 'T00:00:00Z') }));
-        }
-        setPlotStatus();
-        lastError = null;
-      }
-    } catch (e) {
-      // An abort with a newer request token already in place means this
-      // request was superseded (period tap, Refresh, fund edit): the
-      // newer fetch owns the status line, so stay silent.
-      if (seriesController !== controller) return;
-      // Anything else is a failure worth retrying. An AbortError here can
-      // only be this attempt's own 30s timer — a user abort always comes
-      // with a superseding fetchSeries first (see above).
-      if (e.name === 'AbortError') {
-        lastError = timedOut
-          ? 'Loading timed out after 30 seconds. Try Refresh again.'
-          : 'Loading was interrupted. Try Refresh again.';
-      } else {
-        lastError = 'Could not load history (network error). Try Refresh again.';
-      }
-    } finally {
-      clearTimeout(seriesTimeout);
-      if (seriesAttemptController === attemptController) seriesAttemptController = null;
-    }
-    if (lastError === null) break; // loaded
-    if (attempt >= MAX_ATTEMPTS) break; // out of retries
-    if (seriesController !== controller) return; // superseded while failing
-    setStatus(`Loading ${period} history… retrying (attempt ${attempt + 1} of ${MAX_ATTEMPTS})`);
-    await sleep(RETRY_DELAYS[attempt - 1]);
-  }
+  const result = await fetchTimeseriesWithRetry(funds.map(f => f.id), start, end, {
+    isStale: () => seriesController !== controller,
+    onAttempt: c => { seriesAttemptController = c; },
+    onAttemptEnd: c => { if (seriesAttemptController === c) seriesAttemptController = null; },
+    onRetry: n => setStatus(`Loading ${period} history… retrying (attempt ${n} of ${MAX_ATTEMPTS})`),
+  });
   // Still the current request: publish the final state. A superseded
-  // request returns above and never reaches here, so it cannot overwrite
-  // the newer request's status or chart.
+  // request returns above (via isStale) and never reaches here, so it
+  // cannot overwrite the newer request's status or chart.
   if (seriesController !== controller) return;
   seriesController = null;
   seriesAttemptController = null;
   loading = false;
-  if (lastError !== null) setStatus(lastError);
+  if (result.error) {
+    setStatus(result.error);
+  } else {
+    // Merge the response into the existing series, preserving entries for
+    // funds still listed but absent from this response (an incremental
+    // fetch for a newly added fund landed after this request started, and
+    // must not be wiped), and dropping entries for funds no longer
+    // listed. On a period change the response carries every current
+    // fund, so nothing from the old period survives.
+    const next = {};
+    for (const f of funds) {
+      const pts = result.data.funds?.[f.id]?.points;
+      if (pts) {
+        // Cache each point's timestamp once. The chart and the tooltip both
+        // need it, and re-parsing the date string on every use is what froze
+        // the page (see the mousemove handler below).
+        next[f.id] = pts.map(p => ({ date: p.date, value: p.value, t: Date.parse(p.date + 'T00:00:00Z') }));
+      } else if (series[f.id]) {
+        next[f.id] = series[f.id];
+      } else {
+        next[f.id] = [];
+      }
+    }
+    series = next;
+    setPlotStatus();
+  }
   renderTable();
   drawChart();
   // A warning captured at the start of this load (e.g. an invalid ?u=
@@ -436,6 +471,60 @@ async function fetchSeries() {
     const stale = stickyListError;
     stickyListError = null;
     if (stale.controller === controller) setStatus(stale.msg);
+  }
+}
+
+// Fetch history for newly added funds only, and merge it into the chart.
+// Adding a fund used to re-download every fund's history and blank the
+// chart while it loaded; now an add costs one small request for just the
+// new ids, and the existing lines stay put. The new fund's line appears
+// when its data arrives (its table row shows "No data" / "—" until then).
+// This path never sets loading and never draws the "Loading…" note, and
+// it has its own AbortController inside the shared helper — a full
+// fetchSeries neither aborts it nor is aborted by it.
+async function fetchNewFunds(added) {
+  const ids = (added || []).map(f => f.id).filter(Boolean);
+  if (!ids.length) return;
+  const { start, end } = periodRange(period);
+  const result = await fetchTimeseriesWithRetry(ids, start, end, {
+    // A period change makes the result stale — the data would be for the
+    // wrong period. Removal is handled per fund at merge time below, so a
+    // fund dropped mid-flight does not cancel the others.
+    isStale: () => {
+      const now = periodRange(period);
+      return now.start !== start || now.end !== end;
+    },
+  });
+  if (result.stopped) return;
+  if (result.error) {
+    // Show the error only if nothing else owns the status line now: a
+    // full load in flight will publish its own status, and a period
+    // change has already moved on.
+    if (!loading) {
+      const now = periodRange(period);
+      if (now.start === start && now.end === end) setStatus(result.error);
+    }
+    return;
+  }
+  // Merge, but only for funds still listed and only if the period has
+  // not changed since the request started.
+  const now = periodRange(period);
+  if (now.start !== start || now.end !== end) return;
+  let merged = false;
+  for (const id of ids) {
+    if (!funds.some(f => f.id === id)) continue;
+    const pts = result.data.funds?.[id]?.points || [];
+    series[id] = pts.map(p => ({ date: p.date, value: p.value, t: Date.parse(p.date + 'T00:00:00Z') }));
+    merged = true;
+  }
+  if (!merged) return;
+  // A full load in flight will render when it completes (its merge rule
+  // preserves these entries); otherwise update the status, table, and
+  // chart now.
+  if (!loading) {
+    setPlotStatus();
+    renderTable();
+    drawChart();
   }
 }
 
