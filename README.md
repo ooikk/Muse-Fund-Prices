@@ -315,6 +315,12 @@ loads on any device:
   Redis a moment later (debounced) and to this browser immediately.
   If Redis cannot be reached, the change is still saved locally and the
   page says so — a failed shared save never loses local data.
+- The Compare page's fund list is shared under the same code (a second
+  key, `compare:<code>`). "Create my list" snapshots this browser's
+  compare list along with the main list; the first device to open the
+  Compare page with a code that has no shared compare list yet uploads
+  its own list once, so it becomes the shared one. The same rules apply:
+  the link is the key, and last write wins.
 
 Stated plainly:
 
@@ -323,7 +329,8 @@ Stated plainly:
 - Lose the link and the list is lost, unless a browser still remembers
   the code.
 - Two devices editing at once: last write wins. There is no merging.
-- The Compare page list is separate and still lives in localStorage.
+- The Compare page list is shared under the same code too; localStorage
+  stays its local copy, as with the main list.
 
 Setup: the Redis database is `upstash-kv-cerulean-blanket` (Singapore
 region, Free plan: 500,000 commands/month, 250 MB storage, 1 database
