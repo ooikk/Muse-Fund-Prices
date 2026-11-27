@@ -36,4 +36,11 @@ td a { color:var(--blue); }
 .badge.seed { background:#f2f4f7; color:var(--muted); }
 .row-actions { display:flex; gap:6px; flex-wrap:wrap; }
 footer { padding-bottom: 32px; color:var(--muted); font-size:13px; }
+.fund-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.fund-chip { display:inline-flex; align-items:center; gap:8px; background:#f2f4f7; border:1px solid var(--line); border-radius:999px; padding:6px 6px 6px 12px; font-size:14px; }
+.chip-dot { display:inline-block; width:10px; height:10px; border-radius:50%; flex:none; }
+.period-btn.active { background:var(--blue); color:#fff; border-color:var(--blue); }
+.chart-wrap { position:relative; margin:12px 0; }
+.chart-wrap canvas { width:100%; height:420px; display:block; }
+.chart-tip { position:absolute; background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:13px; line-height:1.6; box-shadow:0 2px 8px rgba(0,0,0,.12); pointer-events:none; max-width:320px; z-index:2; }
 @media (max-width: 640px) { th:nth-child(5), td:nth-child(5) { display:none; } }
