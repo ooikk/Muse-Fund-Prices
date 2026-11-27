@@ -60,9 +60,19 @@ export default async function handler(req, res) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
         Accept: 'application/json',
       },
-      signal: AbortSignal.timeout(20000),
+      // 25s: a cold start (CDN MISS, first load of the day) takes ~8–11s
+      // for 5 funds, and an 11-fund cold start took 18s, so 20s left too
+      // little headroom. Must stay below the browser's 30s timeout in
+      // compare.js, or the page gives up before the server answers.
+      signal: AbortSignal.timeout(25000),
     });
   } catch (e) {
+    // AbortSignal.timeout aborts with a TimeoutError, so a slow upstream
+    // and a genuine connection failure can be told apart — the page
+    // retries either way, but the user deserves the true reason.
+    if (e && e.name === 'TimeoutError') {
+      return res.status(200).json({ error: 'FundSingapore took longer than 25 seconds to answer. Try again.' });
+    }
     return res.status(200).json({ error: 'Could not reach FundSingapore (' + (e.cause?.code || 'network error') + '). Try again.' });
   }
   if (!upstream.ok) {
