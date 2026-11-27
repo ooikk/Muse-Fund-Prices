@@ -1,11 +1,39 @@
 // Fund comparison page — plots FundSingapore history for several funds,
 // rebased to 100 at the start of the chosen period.
-// The fund list lives in localStorage on this device. History is fetched
-// live from FundSingapore through the same-origin /api/timeseries proxy
-// each time the period changes or Refresh is pressed; nothing is stored
-// on the server. Each series is in that fund's own currency — there is
-// no currency conversion.
+// The fund list lives in localStorage on this device. When the page is
+// opened with a shared-list link (?u=<code>), the list is shared through
+// Upstash Redis under that code — same scheme as the main tracker page —
+// and localStorage stays the local copy. History is fetched live from
+// FundSingapore through the same-origin /api/timeseries proxy each time
+// the period changes or Refresh is pressed. Each series is in that fund's
+// own currency — there is no currency conversion.
 const STORAGE_KEY = 'unit-trust-compare-funds-v1';
+
+// Shared lists (Upstash Redis), same scheme as the main tracker page: a
+// list code is 16 lowercase letters/digits, remembered in localStorage
+// under the same key the main page uses (unit-trust-list-code-v1). When a
+// code is active, the compare list is shared under that code; localStorage
+// stays the local copy and the fallback when Redis is unreachable — a
+// failed shared save never loses local data.
+const CODE_KEY = 'unit-trust-list-code-v1';
+const CODE_RE = /^[a-z0-9]{16}$/;
+let listCode = null;
+let compareSaveTimer = null;
+// Set when the ?u= code in the address bar is invalid: fetchSeries would
+// otherwise overwrite the warning with its own status when the series
+// load finishes, so it re-applies the warning once, after the first load.
+let stickyInvalidCode = false;
+
+function rememberedCode() {
+  try {
+    const code = localStorage.getItem(CODE_KEY);
+    return code && CODE_RE.test(code) ? code : null;
+  } catch (e) { return null; }
+}
+
+function rememberCode(code) {
+  try { localStorage.setItem(CODE_KEY, code); } catch (e) { /* storage blocked */ }
+}
 
 // Pre-filled from the funds that already have FundSingapore rows in the
 // "Muse unit trust price update" sheet. Janus has no history on
@@ -48,8 +76,66 @@ function load() {
   return SEED_FUNDS.map(f => ({ ...f }));
 }
 
-function save() {
+function saveLocal() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(funds)); } catch (e) { /* storage full/blocked */ }
+}
+
+// Every change writes the local copy immediately, and — when a shared
+// list is active — writes through to Redis after a short pause (debounced,
+// so quick successive edits make one write, not one per edit). A failed
+// Redis write only shows a warning; the local copy is already saved.
+function save() {
+  saveLocal();
+  if (listCode) scheduleCompareSave();
+}
+
+function scheduleCompareSave() {
+  clearTimeout(compareSaveTimer);
+  compareSaveTimer = setTimeout(saveCompareToRedis, 500);
+}
+
+async function saveCompareToRedis() {
+  if (!listCode) return;
+  try {
+    const res = await fetch('/api/lists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: listCode, kind: 'compare', funds }),
+    });
+    const data = await res.json();
+    if (!data || data.error) throw new Error((data && data.error) || 'save failed');
+  } catch (e) {
+    setStatus("Couldn't save the compare list to the shared list — it is still saved in this browser.");
+  }
+}
+
+// Loads the shared compare list for a code. Returns { funds }, or
+// { error, notFound } when no shared list exists yet for the code, or
+// { error } when the store could not be reached. Never throws.
+async function loadSharedCompare(code) {
+  try {
+    const res = await fetch('/api/lists?u=' + encodeURIComponent(code) + '&kind=compare');
+    const data = await res.json();
+    if (data && Array.isArray(data.funds)) return { funds: data.funds };
+    if (data && data.notFound) return { error: data.error || 'No saved list for that code.', notFound: true };
+    return { error: (data && data.error) || 'Could not load the shared compare list.' };
+  } catch (e) {
+    return { error: 'Could not reach the shared-list store.' };
+  }
+}
+
+// Use a remote compare list: normalise ids to uppercase, keep the local
+// copy in step. Callers re-render and re-fetch afterwards.
+function applyRemoteCompare(list) {
+  funds = list.map(f => ({ id: String(f.id).toUpperCase(), name: typeof f.name === 'string' ? f.name : '' }));
+  saveLocal();
+}
+
+// First device to open the Compare page with a code that has no shared
+// compare list yet uploads its local list once, so it becomes the shared
+// one. A failed upload only warns inside saveCompareToRedis.
+function migrateLocalCompare() {
+  if (funds.length) saveCompareToRedis();
 }
 
 function setStatus(msg) { document.getElementById('status').textContent = msg || ''; }
@@ -232,6 +318,10 @@ async function fetchSeries() {
       loading = false;
       renderTable();
       drawChart();
+      if (stickyInvalidCode) {
+        stickyInvalidCode = false;
+        setStatus('That list link has an invalid code — showing your local compare list.');
+      }
     }
   }
 }
@@ -441,9 +531,54 @@ canvas.addEventListener('mouseleave', () => { tip.hidden = true; });
 window.addEventListener('resize', drawChart);
 
 // --- init --------------------------------------------------------------------
-
-renderList();
-fetchSeries();
-// Pick up names for any fund saved without one (added before name lookup
-// existed); the ID stays visible until a name arrives.
-lookupNames(funds.filter(f => !f.name));
+// ?u=<code> in the address bar: the shared compare list is loaded before
+// the first render. Otherwise the local list renders at once, and a code
+// this browser remembers loads in the background and replaces it if one
+// is found; if none exists yet, this browser's local list migrates up.
+(async () => {
+  const params = new URLSearchParams(location.search);
+  const urlCode = (params.get('u') || '').trim().toLowerCase();
+  if (urlCode) {
+    if (!CODE_RE.test(urlCode)) {
+      stickyInvalidCode = true;
+      setStatus('That list link has an invalid code — showing your local compare list.');
+    } else {
+      setStatus('Loading your shared compare list…');
+      const result = await loadSharedCompare(urlCode);
+      if (result.funds) {
+        listCode = urlCode;
+        rememberCode(urlCode);
+        applyRemoteCompare(result.funds);
+      } else if (result.notFound) {
+        listCode = urlCode;
+        rememberCode(urlCode);
+        migrateLocalCompare();
+      } else {
+        setStatus("Couldn't load the shared compare list — showing the copy saved in this browser.");
+      }
+    }
+    renderList();
+    fetchSeries();
+    lookupNames(funds.filter(f => !f.name));
+    return;
+  }
+  renderList();
+  fetchSeries();
+  // Pick up names for any fund saved without one (added before name lookup
+  // existed); the ID stays visible until a name arrives.
+  lookupNames(funds.filter(f => !f.name));
+  const code = rememberedCode();
+  if (!code) return;
+  listCode = code;
+  const result = await loadSharedCompare(code);
+  if (result.funds) {
+    applyRemoteCompare(result.funds);
+    renderList();
+    fetchSeries();
+    lookupNames(funds.filter(f => !f.name));
+  } else if (result.notFound) {
+    migrateLocalCompare();
+  } else {
+    setStatus("Couldn't reach the shared compare list — showing the copy saved in this browser.");
+  }
+})();
