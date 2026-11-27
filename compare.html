@@ -39,7 +39,7 @@
       <button type="button" class="period-btn" data-period="YTD">YTD</button>
       <button type="button" id="refreshBtn" class="primary">Refresh</button>
     </div>
-    <p class="hint">Each fund's line starts at 100 on the first day of the period. Returns are growth in each fund's own currency — there is no currency conversion. Click a column header in the table to sort by it.</p>
+    <p class="hint">Each fund's line starts at 100 on the first day of the period. Returns are growth in each fund's own currency — there is no currency conversion. Click a column header in the table to sort by it. Untick a fund in the table to hide its line from the chart — the row stays, so you can tick it back on.</p>
     <div class="chart-wrap">
       <canvas id="chart" width="1000" height="420" aria-label="Fund performance chart"></canvas>
       <div id="chartTip" class="chart-tip" hidden></div>
@@ -47,7 +47,7 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th data-sort="fund">Fund</th><th data-sort="return">Return</th><th data-sort="from">From</th><th data-sort="to">To</th><th data-sort="points">Data points</th></tr>
+          <tr><th class="show-col" title="Tick to show the fund's line on the chart">Show</th><th data-sort="fund">Fund</th><th data-sort="return">Return</th><th data-sort="from">From</th><th data-sort="to">To</th><th data-sort="points">Data points</th></tr>
         </thead>
         <tbody id="returnRows"></tbody>
       </table>
