@@ -1,13 +1,17 @@
 // Vercel serverless function: GET /api/fund-name?id=F0HKG06XT2
-// Returns the fund's LegalName from FundSingapore's fund detail page.
+// Returns the fund's LegalName and its latest price from FundSingapore's
+// fund detail page.
 // The page is Next.js with the fund data server-rendered in __NEXT_DATA__
 // (props.pageProps.ssrFundDetails) and answers a plain server fetch with
 // HTTP 200, no bot block (verified 27 Nov 2026: F0HKG062RW returns
 // LegalName "Schroder Emerging Markets Fund", ISIN SG9999000251).
 //
-// Response (HTTP 200): { name: "..." } — or { error: "..." } when the
-// page cannot be reached, has no fund data, or carries no name. Never
-// invents a name.
+// Response (HTTP 200): { name, price, currency, date } — price is the
+// raw LastPrice.Value (a number, never rounded), currency the uppercase
+// code (SGD, USD, EUR, ...), date the ISO price date (YYYY-MM-DD). A
+// field FundSingapore does not carry comes back empty (price null,
+// currency '' , date '') — never invented. { error } when the page cannot
+// be reached, has no fund data, or carries neither a name nor a price.
 //
 // This file has no dependencies and no build step, so it deploys as-is
 // on Vercel.
@@ -57,13 +61,23 @@ export default async function handler(req, res) {
     return res.status(200).json({ error: 'FundSingapore page data could not be read.' });
   }
   const name = String(details?.LegalName || details?.Name || '').trim();
-  if (!name) {
-    return res.status(200).json({ error: 'No fund name found for this ID.' });
+  const lastPrice = details?.LastPrice || {};
+  const value = lastPrice.Value;
+  const price = (typeof value === 'number' && Number.isFinite(value)) ? value : null;
+  // Currency is the price's currency only — no fallback to the fund-level
+  // Currency, so a missing price never carries a currency with it.
+  const currency = String(lastPrice.Currency?.Id || '').toUpperCase();
+  const dateRaw = String(lastPrice.Date || '');
+  const date = /^\d{4}-\d{2}-\d{2}/.test(dateRaw) ? dateRaw.slice(0, 10) : '';
+  if (!name && price === null) {
+    return res.status(200).json({ error: 'No fund name or price found for this ID.' });
   }
 
-  // Fund names rarely change; cache a day on the Vercel CDN.
-  // (Vercel-CDN-Cache-Control, not plain Cache-Control — Vercel strips
-  // s-maxage from Cache-Control on function responses; see timeseries.js.)
-  res.setHeader('Vercel-CDN-Cache-Control', 's-maxage=86400, stale-while-revalidate=86400');
-  return res.status(200).json({ name });
+  // The response now carries the day's price, so it is cached an hour on
+  // the Vercel CDN — the Date column shows the price date, so any lag is
+  // visible to the user. (Vercel-CDN-Cache-Control, not plain
+  // Cache-Control — Vercel strips s-maxage from Cache-Control on function
+  // responses; see timeseries.js.)
+  res.setHeader('Vercel-CDN-Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+  return res.status(200).json({ name, price, currency, date });
 }
