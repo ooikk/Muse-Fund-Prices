@@ -58,6 +58,13 @@ const COLORS = ['#0b5fff', '#067647', '#b54708', '#b42318', '#6941c6', '#175cd3'
 let funds = load();
 let period = '1Y';
 let series = {}; // id -> [{ date, value }]
+// Funds hidden from the chart, by fund id. Temporary and in-memory only:
+// never written to localStorage, never sent to /api/lists. A fresh page
+// load shows every fund again. The table row stays visible (dimmed) so
+// the fund can be ticked back on.
+const hiddenFunds = new Set();
+// { start, end } of the last loaded period, for the status line.
+let lastRange = null;
 // In-flight series request. A new request (period change, Refresh, fund
 // add/remove) aborts the previous one — the newest request always wins,
 // so a period tap is never silently swallowed while a fetch is in flight.
@@ -128,6 +135,12 @@ async function loadSharedCompare(code) {
 // copy in step. Callers re-render and re-fetch afterwards.
 function applyRemoteCompare(list) {
   funds = list.map(f => ({ id: String(f.id).toUpperCase(), name: typeof f.name === 'string' ? f.name : '' }));
+  // A remote list replaces the local one, but hiding is this browser's
+  // display choice: keep it for funds that are still listed, drop ids
+  // that no longer exist.
+  for (const id of [...hiddenFunds]) {
+    if (!funds.some(f => f.id === id)) hiddenFunds.delete(id);
+  }
   saveLocal();
 }
 
@@ -160,6 +173,7 @@ function renderList() {
     `<button type="button" class="small danger-outline" data-del="${esc(f.id)}" aria-label="Remove ${esc(label(f))}">Remove</button></span>`
   ).join('');
   box.querySelectorAll('[data-del]').forEach(btn => btn.addEventListener('click', () => {
+    hiddenFunds.delete(btn.getAttribute('data-del'));
     funds = funds.filter(f => f.id !== btn.getAttribute('data-del'));
     save();
     renderList();
@@ -259,6 +273,26 @@ document.getElementById('periodBar').addEventListener('click', e => {
   }
 });
 
+// Status line for the loaded period: how many funds are actually drawn
+// (hidden funds don't count), plus any funds with no data. Also used by
+// the show/hide tick boxes, so the line stays true after a tick.
+function setPlotStatus() {
+  const empty = funds.filter(f => !series[f.id].length).map(f => label(f));
+  const withData = funds.filter(f => series[f.id].length).length;
+  const visible = funds.filter(f => !hiddenFunds.has(f.id) && series[f.id].length).length;
+  if (!withData) {
+    setStatus(`No history returned for ${period}. FundSingapore may not have data for these funds.`);
+    return;
+  }
+  if (visible === 0) {
+    setStatus('All funds are hidden — tick a fund in the table below to show its line again.');
+    return;
+  }
+  const range = lastRange ? ` (${lastRange.start} to ${lastRange.end})` : '';
+  setStatus(`${visible} of ${funds.length} fund(s) plotted for ${period}${range}.` +
+    (empty.length ? ` No data from FundSingapore: ${empty.join(', ')}.` : ''));
+}
+
 // --- fetching --------------------------------------------------------------
 
 async function fetchSeries() {
@@ -282,6 +316,7 @@ async function fetchSeries() {
   setStatus(`Loading ${period} history…`);
   drawChart();
   const { start, end } = periodRange(period);
+  lastRange = { start, end };
   try {
     const ids = funds.map(f => f.id).join(',');
     const res = await fetch(`/api/timeseries?ids=${encodeURIComponent(ids)}&start=${start}&end=${end}`, { signal: controller.signal });
@@ -296,12 +331,7 @@ async function fetchSeries() {
       series[f.id] = ((data.funds && data.funds[f.id] && data.funds[f.id].points) || [])
         .map(p => ({ date: p.date, value: p.value, t: Date.parse(p.date + 'T00:00:00Z') }));
     }
-    const empty = funds.filter(f => !series[f.id].length).map(f => label(f));
-    const withData = funds.filter(f => series[f.id].length).length;
-    setStatus(withData
-      ? `${withData} of ${funds.length} fund(s) plotted for ${period} (${start} to ${end}).` +
-        (empty.length ? ` No data from FundSingapore: ${empty.join(', ')}.` : '')
-      : `No history returned for ${period}. FundSingapore may not have data for these funds.`);
+    setPlotStatus();
   } catch (e) {
     if (e.name === 'AbortError') {
       // User-aborted (superseded): the newer fetch owns the status.
@@ -373,13 +403,30 @@ function renderTable() {
   });
   body.innerHTML = rows.map(({ f, i, points, r }) => {
     const color = COLORS[i % COLORS.length];
+    const hidden = hiddenFunds.has(f.id);
+    // The tick box is the per-fund show/hide control. The row stays
+    // visible (dimmed when hidden) so the fund can be ticked back on.
+    const tick = `<td class="show-col"><input type="checkbox" data-show="${esc(f.id)}"${hidden ? '' : ' checked'} aria-label="Show ${esc(label(f))} on the chart"></td>`;
+    const rowClass = hidden ? ' class="hidden-fund"' : '';
+    const fundCell = `<td><span class="chip-dot" style="background:${color}"></span> ${esc(label(f))} <span class="hint">(${esc(f.id)})</span></td>`;
     if (r === null) {
-      return `<tr><td><span class="chip-dot" style="background:${color}"></span> ${esc(label(f))} <span class="hint">(${esc(f.id)})</span></td><td colspan="4">No data</td></tr>`;
+      return `<tr${rowClass}>${tick}${fundCell}<td colspan="4">No data</td></tr>`;
     }
     const sign = r > 0 ? '+' : '';
-    return `<tr><td><span class="chip-dot" style="background:${color}"></span> ${esc(label(f))} <span class="hint">(${esc(f.id)})</span></td>` +
+    return `<tr${rowClass}>${tick}${fundCell}` +
       `<td class="price">${sign}${r.toFixed(2)}%</td><td>${esc(points[0].date)}</td><td>${esc(points[points.length - 1].date)}</td><td>${points.length}</td></tr>`;
   }).join('');
+  // Hiding is a display choice only: it never touches localStorage or
+  // Redis, and the set is the single source of truth — re-renders (sort,
+  // period change, late name lookup, remote list load) rebuild the boxes
+  // from it, so the state survives them.
+  body.querySelectorAll('[data-show]').forEach(cb => cb.addEventListener('change', () => {
+    const id = cb.getAttribute('data-show');
+    if (cb.checked) hiddenFunds.delete(id); else hiddenFunds.add(id);
+    cb.closest('tr').classList.toggle('hidden-fund', !cb.checked);
+    if (!loading) setPlotStatus();
+    drawChart();
+  }));
 }
 
 document.querySelectorAll('thead th[data-sort]').forEach(th => {
@@ -420,8 +467,12 @@ function drawChart() {
     return;
   }
 
-  const plotted = funds.filter(f => (series[f.id] || []).length >= 2);
-  if (!plotted.length) {
+  // Funds with enough history to draw, and of those the ones not hidden.
+  // The axis range comes from every fund with data (hidden or not), so
+  // ticking a box on and off never rescales the chart.
+  const withData = funds.filter(f => (series[f.id] || []).length >= 2);
+  const plotted = withData.filter(f => !hiddenFunds.has(f.id));
+  if (!withData.length) {
     ctx.fillStyle = '#5b6470';
     ctx.font = '15px system-ui, sans-serif';
     ctx.fillText('No history to plot yet — add funds and press Refresh.', 16, 40);
@@ -432,7 +483,7 @@ function drawChart() {
   const W = cssW - padL - padR, H = cssH - padT - padB;
 
   let min = Infinity, max = -Infinity, t0 = Infinity, t1 = -Infinity;
-  for (const f of plotted) {
+  for (const f of withData) {
     for (const p of series[f.id]) {
       min = Math.min(min, p.value); max = Math.max(max, p.value);
       t0 = Math.min(t0, p.t); t1 = Math.max(t1, p.t);
@@ -472,9 +523,18 @@ function drawChart() {
     ctx.setLineDash([]);
   }
 
-  // One line per fund.
-  plotted.forEach((f, i) => {
-    ctx.strokeStyle = COLORS[i % COLORS.length];
+  // One line per visible fund. The colour follows the fund's position in
+  // the fund list (the same index the table uses), so hiding one fund
+  // never recolors the others.
+  if (!plotted.length) {
+    // Every fund with data is hidden: axes with no lines, and a note.
+    ctx.fillStyle = '#5b6470';
+    ctx.font = '15px system-ui, sans-serif';
+    ctx.fillText('All funds are hidden — tick a fund in the table below to show its line.', 16, 40);
+    return;
+  }
+  plotted.forEach(f => {
+    ctx.strokeStyle = COLORS[funds.indexOf(f) % COLORS.length];
     ctx.lineWidth = 2;
     ctx.beginPath();
     series[f.id].forEach((p, j) => {
@@ -490,7 +550,7 @@ function drawChart() {
 canvas.addEventListener('mousemove', e => {
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
-  const plotted = funds.filter(f => (series[f.id] || []).length >= 2);
+  const plotted = funds.filter(f => !hiddenFunds.has(f.id) && (series[f.id] || []).length >= 2);
   if (!plotted.length || loading || !chartGeom) { tip.hidden = true; return; }
   // One pass over the points, using the cached timestamps and the x
   // mapping drawChart already computed. The old code called chartX() for
@@ -508,18 +568,19 @@ canvas.addEventListener('mousemove', e => {
   }
   if (!best || bestDx > 40) { tip.hidden = true; return; }
   // Best performer at the hovered date first: rows are sorted by each
-  // fund's value at that date, highest first.
-  const rows = plotted.map((f, i) => {
+  // fund's value at that date, highest first. The dot colour follows the
+  // fund's position in the fund list, matching the table and the chart.
+  const rows = plotted.map(f => {
     const pts = series[f.id];
     let nearest = pts[0];
     for (const p of pts) {
       if (Math.abs(p.t - best.t) < Math.abs(nearest.t - best.t)) nearest = p;
     }
-    return { f, i, value: nearest.value };
+    return { f, value: nearest.value };
   })
     .sort((a, b) => b.value - a.value)
-    .map(({ f, i, value }) =>
-      `<span style="color:${COLORS[i % COLORS.length]}">●</span> ${esc(label(f))}: ${value.toFixed(2)}`)
+    .map(({ f, value }) =>
+      `<span style="color:${COLORS[funds.indexOf(f) % COLORS.length]}">●</span> ${esc(label(f))}: ${value.toFixed(2)}`)
     .join('<br>');
   tip.innerHTML = `<strong>${esc(best.date)}</strong><br>${rows}`;
   tip.hidden = false;
